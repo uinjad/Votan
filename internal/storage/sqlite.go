@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "modernc.org/sqlite" // Імпортуємо драйвер анонімно
+	_ "modernc.org/sqlite" // Анонімний імпорт драйвера
 )
 
 // DB обгортає стандартне підключення до бази
@@ -12,9 +12,8 @@ type DB struct {
 	*sql.DB
 }
 
-// InitDB створює файл бази і налаштовує таблицю
+// InitDB створює файл бази і налаштовує таблицю згідно з TDD
 func InitDB(filepath string) (*DB, error) {
-	// Підключаємося до файлу (якщо його немає — він створиться)
 	db, err := sql.Open("sqlite", filepath)
 	if err != nil {
 		return nil, fmt.Errorf("помилка відкриття БД: %w", err)
@@ -25,15 +24,18 @@ func InitDB(filepath string) (*DB, error) {
 		return nil, fmt.Errorf("помилка увімкнення WAL: %w", err)
 	}
 
-	// Створюємо таблицю users (згідно з твоїм контрактом даних)
+	// Створюємо таблицю users (Повний контракт даних з TDD)
 	query := `
 	CREATE TABLE IF NOT EXISTS users (
 		yt_channel_id TEXT PRIMARY KEY,
+		tg_id TEXT DEFAULT '',
 		display_name TEXT,
 		status INTEGER DEFAULT 0,
 		is_irradiated BOOLEAN DEFAULT FALSE,
 		pos_x INTEGER DEFAULT 0,
 		pos_y INTEGER DEFAULT 0,
+		head_id INTEGER DEFAULT 0,
+		body_id INTEGER DEFAULT 0,
 		last_active DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
 
@@ -41,20 +43,26 @@ func InitDB(filepath string) (*DB, error) {
 		return nil, fmt.Errorf("помилка створення таблиці: %w", err)
 	}
 
-	fmt.Println("💾 База даних SQLite успішно ініціалізована!")
+	fmt.Println("💾 База даних SQLite успішно ініціалізована за контрактом TDD!")
 	return &DB{db}, nil
 }
 
 // UserDTO (Data Transfer Object) для передачі даних між БД і рушієм
 type UserDTO struct {
-	ID   string
-	Name string
-	X, Y int
+	ID           string
+	TgID         string
+	Name         string
+	Status       int  // 0: Тінь, 1: Хрещений
+	IsIrradiated bool // Для 5G івенту
+	X, Y         int
+	HeadID       int // ID голови
+	BodyID       int // ID тіла
 }
 
 // LoadAllUsers витягує всіх гравців з бази при старті сервера
 func (db *DB) LoadAllUsers() (map[string]UserDTO, error) {
-	rows, err := db.Query("SELECT yt_channel_id, display_name, pos_x, pos_y FROM users")
+	query := `SELECT yt_channel_id, tg_id, display_name, status, is_irradiated, pos_x, pos_y, head_id, body_id FROM users`
+	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +71,7 @@ func (db *DB) LoadAllUsers() (map[string]UserDTO, error) {
 	users := make(map[string]UserDTO)
 	for rows.Next() {
 		var u UserDTO
-		if err := rows.Scan(&u.ID, &u.Name, &u.X, &u.Y); err != nil {
+		if err := rows.Scan(&u.ID, &u.TgID, &u.Name, &u.Status, &u.IsIrradiated, &u.X, &u.Y, &u.HeadID, &u.BodyID); err != nil {
 			continue // Пропускаємо биті рядки
 		}
 		users[u.ID] = u
@@ -71,7 +79,7 @@ func (db *DB) LoadAllUsers() (map[string]UserDTO, error) {
 	return users, nil
 }
 
-// UpsertUser оновлює координати гравця або створює нового (якщо його ще немає)
+// UpsertUser оновлює ТІЛЬКИ координати та активність (щоб не затерти скіни під час руху)
 func (db *DB) UpsertUser(id, name string, x, y int) {
 	query := `
 	INSERT INTO users (yt_channel_id, display_name, pos_x, pos_y, last_active)
@@ -81,10 +89,32 @@ func (db *DB) UpsertUser(id, name string, x, y int) {
 		pos_x = excluded.pos_x,
 		pos_y = excluded.pos_y,
 		last_active = CURRENT_TIMESTAMP;`
-	
-	// Виконуємо запит у фоні, щоб не блокувати гру
-	_, err := db.Exec(query, id, name, x, y)
-	if err != nil {
-		fmt.Printf("Помилка збереження гравця %s в БД: %v\n", name, err)
-	}
+
+	// Виконуємо запит у фоні
+	go func() {
+		_, err := db.Exec(query, id, name, x, y)
+		if err != nil {
+			fmt.Printf("Помилка збереження координат гравця %s: %v\n", name, err)
+		}
+	}()
+}
+
+// УТИЛІТИ ДЛЯ ІВЕНТІВ ТА МАГАЗИНУ (Згідно з TDD)
+
+// UpdateSkin викликається, коли гравець пише !head 3 або !body 2
+func (db *DB) UpdateSkin(id string, headID, bodyID int) {
+	query := `UPDATE users SET head_id = ?, body_id = ? WHERE yt_channel_id = ?`
+	go db.Exec(query, headID, bodyID, id)
+}
+
+// BaptizeUser викликається після успішної лінковки через Telegram (!хрещення-...)
+func (db *DB) BaptizeUser(ytID, tgID string) {
+	query := `UPDATE users SET status = 1, tg_id = ? WHERE yt_channel_id = ?`
+	go db.Exec(query, tgID, ytID)
+}
+
+// SetIrradiated викликається під час івенту "5G Атака"
+func (db *DB) SetIrradiated(id string, isIrradiated bool) {
+	query := `UPDATE users SET is_irradiated = ? WHERE yt_channel_id = ?`
+	go db.Exec(query, isIrradiated, id)
 }
