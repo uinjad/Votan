@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Слов'яни проти Ящерів - Матриця</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            background-color: #000; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            overflow: hidden; 
+        }
+        canvas { 
+            background-color: #111; 
+            box-shadow: 0 0 50px rgba(0,0,0,1);
+            /* Фіксований розмір: 20 клітинок по 40px = 800, 35 клітинок по 40px = 1400 */
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="gameCanvas" width="800" height="1400"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const TILE_SIZE = 40;
+    const MAX_X = 20;
+    const MAX_Y = 35;
+
+    const images = {};
+    let loadedCount = 0;
+    const totalImages = 3;
+
+    function preload(name, src) {
+        const img = new Image();
+        img.src = src;
+        img.onload = () => { if (++loadedCount === totalImages) initWS(); };
+        img.onerror = () => { if (++loadedCount === totalImages) initWS(); };
+        images[name] = img;
+    }
+
+    // Завантаження твоїх файлів
+    preload('bg', 'assets/map.png');
+    preload('body', 'assets/body_00.png');
+    preload('head', 'assets/head_00.png');
+
+    function initWS() {
+        const ws = new WebSocket('ws://localhost:8080/ws');
+        ws.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            if (data.players) render(data.players);
+        };
+        ws.onclose = () => setTimeout(initWS, 2000);
+    }
+
+    function render(players) {
+        // Очищення екрана
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 1. ФОН
+        if (images['bg'].complete) {
+            ctx.drawImage(images['bg'], 0, 0, canvas.width, canvas.height);
+        }
+
+        // 2. СОРТУВАННЯ (Y-sorting: малюємо зверху вниз по матриці)
+        // В Go Y=34 це верх, тому сортуємо від більшого до меншого
+        players.sort((a, b) => b.y - a.y);
+
+        players.forEach(p => {
+            // ПРЯМА ЛОГІКА МАТРИЦІ
+            // x: 0..19 -> 0..760px
+            const drawX = p.x * TILE_SIZE;
+
+            // y: 0..34 -> інвертуємо для Canvas
+            // Якщо p.y = 34 (верх матриці), drawY = 0px
+            // Якщо p.y = 0 (низ матриці), drawY = 1360px
+            const drawY = (MAX_Y - 1 - p.y) * TILE_SIZE;
+
+            // 3. ТІНЬ ПІД НОГАМИ (просто овал у клітинці)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.beginPath();
+            ctx.ellipse(drawX + 20, drawY + 32, 16, 6, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 4. ПЕРСОНАЖ (Квадрат 40х40)
+            // Твої 256х256 спрайти будуть автоматично стиснуті в одну клітинку
+            if (images['body'].complete) {
+                ctx.drawImage(images['body'], drawX, drawY, TILE_SIZE, TILE_SIZE);
+            }
+            if (images['head'].complete) {
+                ctx.drawImage(images['head'], drawX, drawY, TILE_SIZE, TILE_SIZE);
+            }
+
+            // 5. НІКНЕЙМ (Маленький над клітинкою)
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'white';
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 2;
+            ctx.strokeText(p.name, drawX + 20, drawY - 4);
+            ctx.fillText(p.name, drawX + 20, drawY - 4);
+        });
+    }
+</script>
+</body>
+</html>
