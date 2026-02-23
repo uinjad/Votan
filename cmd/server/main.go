@@ -7,14 +7,14 @@ import (
 
 	"Votan/internal/engine"
 	"Votan/internal/storage"
-	"Votan/internal/websocket"
-	"Votan/internal/youtube"
+	"Votan/internal/websocket" // Пакет, який ми зараз створимо
+	"Votan/internal/youtube"   // Пакет для чату
 
-	"github.com/joho/godotenv" // Додали пакет для .env
+	"github.com/joho/godotenv"
 )
 
 func main() {
-	fmt.Println("Сервер «Слов’яни проти Ящерів» стартує...")
+	fmt.Println("📜 Сервер «Слов’яни проти Ящерів» стартує...")
 
 	// 1. Завантажуємо секрети з .env
 	err := godotenv.Load()
@@ -37,13 +37,15 @@ func main() {
 	videoID := os.Getenv("YOUTUBE_VIDEO_ID")
 	apiKey := os.Getenv("YOUTUBE_API_KEY")
 
+	// Перевірка наявності ключів
 	if videoID == "" || apiKey == "" {
-		log.Fatal("❌ КРИТИЧНО: YOUTUBE_VIDEO_ID або YOUTUBE_API_KEY не задані в .env")
+		log.Println("⚠️ Попередження: YouTube ключі не задані. Працюватиме лише Адмін-панель.")
+	} else {
+		// 5. Запускаємо прослуховування чату (у фоні)
+		go youtube.ListenChat(videoID, apiKey, gameLoop.CommandChan)
 	}
 
-	// 5. Запускаємо прослуховування чату
-	go youtube.ListenChat(videoID, apiKey, gameLoop.CommandChan)
-
-	// 6. Запускаємо WebSocket
+	// 6. Запускаємо WebSocket сервер (він заблокує main, щоб програма не закрилась)
+	// Передаємо gameLoop, щоб сервер мав доступ до CommandChan та GetState()
 	websocket.StartServer(gameLoop)
 }

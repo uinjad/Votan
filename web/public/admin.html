@@ -2,71 +2,177 @@
 <html lang="uk">
 <head>
     <meta charset="UTF-8">
-    <title>Votan - Панель Деміурга</title>
+    <title>Votan — Панель Деміурга</title>
     <style>
-        body { font-family: sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }
-        .panel { background: #16213e; padding: 20px; border-radius: 8px; max-width: 400px; border: 1px solid #0f3460; margin-bottom: 20px; }
-        h2, h3 { color: #e94560; margin-top: 0; }
-        button { background: #e94560; color: white; border: none; padding: 10px 15px; margin: 5px 0; cursor: pointer; border-radius: 4px; font-weight: bold; width: 100%; box-sizing: border-box; }
-        button:hover { background: #d03050; }
-        .btn-green { background: #2e7d32; } .btn-green:hover { background: #1b5e20; }
-        .btn-purple { background: #6a1b9a; } .btn-purple:hover { background: #4a148c; }
-        input { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border-radius: 4px; border: none; }
-        .log { background: #0f3460; padding: 10px; height: 150px; overflow-y: scroll; font-family: monospace; font-size: 12px; border-radius: 4px; }
+        body { font-family: 'Georgia', serif; background-color: #1a1a1a; color: #e0e0e0; display: flex; justify-content: center; padding: 20px; gap: 20px; }
+        .main-col { width: 450px; }
+        .side-col { width: 400px; }
+        
+        .panel { background: #2c2c2c; border: 2px solid #D4AF37; padding: 20px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.5); position: sticky; top: 20px; }
+        h2, h3 { color: #D4AF37; text-align: center; margin-top: 0; text-transform: uppercase; letter-spacing: 2px; }
+        
+        .section { margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #444; }
+        label { display: block; margin-bottom: 5px; font-size: 14px; color: #aaa; }
+        input { width: 100%; padding: 10px; margin-bottom: 10px; background: #111; border: 1px solid #555; color: #fff; border-radius: 5px; box-sizing: border-box; }
+        
+        button { padding: 10px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; text-transform: uppercase; transition: 0.2s; }
+        .btn-full { width: 100%; margin-bottom: 5px; }
+        .btn-boss { background: #b71c1c; color: white; }
+        .btn-vote { background: #4a148c; color: white; }
+        .btn-5g { background: #1b5e20; color: white; }
+        .btn-mock { background: #0277bd; color: white; }
+        .btn-stop { background: #444; color: #fff; }
+
+        /* Список гравців без блимання */
+        .player-list { height: 750px; overflow-y: auto; background: #111; border: 1px solid #444; border-radius: 5px; padding: 5px; }
+        .player-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #222; transition: background 0.2s; }
+        .player-item:hover { background: #252525; }
+        .player-info { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+        .player-name { font-weight: bold; color: #fff; font-size: 14px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+        .player-id { font-size: 9px; color: #555; font-family: monospace; }
+        
+        .player-actions { display: flex; gap: 4px; flex-shrink: 0; }
+        .btn-action { font-size: 12px; padding: 5px 8px; min-width: 35px; }
+        .btn-baptize { background: #D4AF37; color: #000; }
+        .btn-baptize.done { background: #333; color: #555; cursor: default; }
+        .btn-kick { background: #333; color: #f44; border: 1px solid #444; }
+        .btn-kick:hover { background: #f44; color: #fff; }
+        .btn-target { background: #0277bd; color: #fff; }
+
+        #console { width: 100%; height: 150px; background: #000; color: #0f0; font-family: monospace; font-size: 11px; padding: 10px; border-radius: 5px; overflow-y: auto; border: 1px solid #333; margin-top: 10px; }
     </style>
 </head>
 <body>
+
+<div class="main-col">
     <div class="panel">
-        <h2>🔥 Керування Івентами</h2>
-        
-        <input type="text" id="voteTopic" placeholder="Тема Віче" value="ВІДРУБАТИ 5G ВИШКИ?">
-        <div style="display: flex; gap: 10px;">
-            <input type="text" id="voteOpt1" placeholder="Ліво (Фіолетовий)" value="СПАЛИТИ">
-            <input type="text" id="voteOpt2" placeholder="Право (Червоний)" value="ЗАЛИШИТИ">
+        <h2>Деміург Контроль</h2>
+
+        <div class="section">
+            <label>МОК / КЕРУВАННЯ ЦІЛЛЮ</label>
+            <div style="display: flex; gap: 5px;">
+                <input type="text" id="mockID" placeholder="ID (bot1)" value="bot1">
+                <input type="text" id="mockName" placeholder="Ім'я" value="Бот">
+            </div>
+            <input type="text" id="mockAction" placeholder="Дія (!r5, !h1b1, привіт...)">
+            <button class="btn-mock btn-full" onclick="sendMock()">🚀 ВИКОНАТИ ВІД ІМЕНІ</button>
         </div>
-        <button class="btn-purple" onclick="sendVote()">⚖️ Запустити Віче (60 сек)</button>
-        <button onclick="sendAdminCommand('!stop_vote')" style="background: #555;">🛑 Зупинити Віче</button>
-        
-        <hr style="border-color: #0f3460; margin: 15px 0;">
-        
-        <button class="btn-green" onclick="sendAdminCommand('!5g')">📡 Запустити 5G Атаку (20 сек)</button>
-    </div>
 
+        <div class="section">
+            <label>ІВЕНТИ ТА БОСИ</label>
+            <button class="btn-boss btn-full" onclick="sendAdmin('!ящер')">🐉 ВИКЛИКАТИ ЯЩЕРА</button>
+            <button class="btn-stop btn-full" onclick="sendAdmin('!stop_boss')">❌ ПРИБРАТИ ЯЩЕРА</button>
+            <button class="btn-5g btn-full" onclick="sendAdmin('!5g')">📡 АТАКА 5G</button>
+        </div>
+
+        <div class="section">
+            <label>ГЛОБАЛЬНЕ ВІЧЕ</label>
+            <button class="btn-vote btn-full" onclick="sendAdmin('!віче БУДЕМО ЖИТИ?|ТАК|НІ')">⚖️ ЗАПУСТИТИ ВІЧЕ</button>
+            <button class="btn-stop btn-full" onclick="sendAdmin('!stop_vote')">🛑 ЗУПИНИТИ ТА ПІДРАХУВАТИ</button>
+        </div>
+
+        <div id="console"></div>
+    </div>
+</div>
+
+<div class="side-col">
     <div class="panel">
-        <h3>Тестування (Мок гравця)</h3>
-        <input type="text" id="customCmd" placeholder="!r5, !tk, !h1b2 або текст">
-        <button onclick="sendTestCommand()">Надіслати як тест-гравець</button>
+        <h3>Слов'яни в ефірі</h3>
+        <div class="player-list" id="playerList">
+            </div>
     </div>
+</div>
 
-    <div class="log" id="log"></div>
+<script>
+    const ADMIN_SECRET = "GOD_MODE_ADMIN_SECRET"; 
+    let ws;
 
-    <script>
-        const logDiv = document.getElementById('log');
-        const ws = new WebSocket('ws://localhost:8080/ws');
-        ws.onopen = () => log("✅ Підключено до ядра");
-        ws.onclose = () => log("❌ З'єднання розірвано");
-        function log(msg) { logDiv.innerHTML = `<div>${new Date().toLocaleTimeString()} - ${msg}</div>` + logDiv.innerHTML; }
+    function log(msg) {
+        const c = document.getElementById('console');
+        const time = new Date().toLocaleTimeString();
+        c.innerHTML = `<div style="margin-bottom:2px;">[${time}] ${msg}</div>` + c.innerHTML;
+        if (c.children.length > 50) c.lastChild.remove();
+    }
 
-        function sendVote() {
-            const topic = document.getElementById('voteTopic').value;
-            const opt1 = document.getElementById('voteOpt1').value;
-            const opt2 = document.getElementById('voteOpt2').value;
-            sendAdminCommand('!віче', topic + "|" + opt1 + "|" + opt2);
-        }
+    function connect() {
+        ws = new WebSocket('ws://localhost:8080/ws');
+        ws.onopen = () => log("Зв'язок з сервером встановлено.");
+        ws.onmessage = (e) => {
+            try {
+                const state = JSON.parse(e.data);
+                if (state.players) updatePlayerList(state.players);
+            } catch (err) { console.error(err); }
+        };
+        ws.onclose = () => {
+            log("❌ Зв'язок втрачено. Перепідключення...");
+            setTimeout(connect, 2000);
+        };
+    }
 
-        function sendAdminCommand(action, payload = "") {
-            const fullAction = payload ? action + " " + payload : action;
-            ws.send(JSON.stringify({ PlayerID: "GOD_MODE_ADMIN_SECRET", PlayerName: "Деміург", Action: fullAction }));
-            log(`⚡ Адмін: ${fullAction}`);
-        }
+    function updatePlayerList(players) {
+        const list = document.getElementById('playerList');
+        const newIDs = new Set(players.map(p => p.id));
 
-        function sendTestCommand() {
-            const val = document.getElementById('customCmd').value;
-            if (val) {
-                ws.send(JSON.stringify({ PlayerID: "test_user_01", PlayerName: "Тестер", Action: val }));
-                log(`🏃 Тест: ${val}`);
+        // 1. Видаляємо тих, хто пішов
+        Array.from(list.children).forEach(child => {
+            if (!newIDs.has(child.dataset.id)) child.remove();
+        });
+
+        // 2. Оновлюємо існуючих або додаємо нових
+        players.forEach(p => {
+            let item = list.querySelector(`[data-id="${p.id}"]`);
+            const isBaptized = (p.status === 1);
+            const nameStr = `${p.name} ${isBaptized ? '👑' : ''}`;
+
+            // Шаблон вмісту для порівняння
+            const content = `
+                <div class="player-info">
+                    <span class="player-name">${nameStr}</span>
+                    <span class="player-id">${p.id}</span>
+                </div>
+                <div class="player-actions">
+                    <button class="btn-action btn-target" title="Обрати ціллю" onclick="setMock('${p.id}', '${p.name}')">🎯</button>
+                    <button class="btn-action btn-baptize ${isBaptized ? 'done' : ''}" 
+                            onclick="${isBaptized ? '' : `sendAdmin('!baptize ${p.id}')`}">✝️</button>
+                    <button class="btn-action btn-kick" onclick="sendAdmin('!kick ${p.id}')">🚫</button>
+                </div>
+            `;
+
+            if (!item) {
+                item = document.createElement('div');
+                item.className = "player-item";
+                item.dataset.id = p.id;
+                item.innerHTML = content;
+                list.appendChild(item);
+            } else if (item.innerHTML !== content) {
+                // Оновлюємо тільки якщо щось змінилося (це прибирає блимання)
+                item.innerHTML = content;
             }
-        }
-    </script>
+        });
+    }
+
+    function setMock(id, name) {
+        document.getElementById('mockID').value = id;
+        document.getElementById('mockName').value = name;
+        log(`Ціль: ${name} обрана для мока.`);
+    }
+
+    function sendAdmin(command) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({ PlayerID: ADMIN_SECRET, PlayerName: "ADMIN", Action: command }));
+        if (!command.startsWith('!kick') && !command.startsWith('!baptize')) log(command);
+    }
+
+    function sendMock() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const id = document.getElementById('mockID').value;
+        const name = document.getElementById('mockName').value;
+        const action = document.getElementById('mockAction').value;
+        if (!id || !action) return;
+        ws.send(JSON.stringify({ PlayerID: id, PlayerName: name, Action: action }));
+    }
+
+    connect();
+</script>
 </body>
 </html>
