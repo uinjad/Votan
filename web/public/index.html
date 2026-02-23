@@ -2,23 +2,10 @@
 <html lang="uk">
 <head>
     <meta charset="UTF-8">
-    <title>Слов'яни проти Ящерів</title>
+    <title>Слов'яни проти Ящерів - Фінал</title>
     <style>
-        body { 
-            margin: 0; 
-            padding: 0; 
-            background-color: #000; 
-            display: flex; 
-            justify-content: center; 
-            align-items: center; 
-            height: 100vh; 
-            overflow: hidden; 
-        }
-        canvas { 
-            background-color: #111; 
-            box-shadow: 0 0 40px rgba(0,0,0,1);
-            border: 1px solid #333;
-        }
+        body { margin: 0; padding: 0; background-color: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        canvas { background-color: #0a0a0a; box-shadow: 0 0 50px rgba(0,0,0,1); border: 1px solid #222; }
     </style>
 </head>
 <body>
@@ -28,203 +15,184 @@
 <script>
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
-
     const TILE_SIZE = 40;
     const MAX_X = 20;
     const MAX_Y = 35;
-
     const images = {};
     let loadedCount = 0;
-    
-    // 2 карти + 15 тіл + 17 голів = 34 файли
-    const totalImages = 34;
+    const totalImages = 35;
+
+    // Палітра сеттінгу
+    const colors = {
+        gold: '#D4AF37', silver: '#cfd8dc', parchment: 'rgba(238, 223, 204, 0.95)', ink: '#3e2723',
+        darkWood: 'rgba(26, 18, 14, 0.9)', 
+        purpleLeft: '#6a1b9a', // Фіолетовий (Опція 1)
+        redRight: '#d32f2f',   // Червоний (Опція 2)
+        danger5G: 'rgba(255, 0, 0, 0.45)' // Зона 5G
+    };
 
     function preload(name, src) {
-        const img = new Image();
-        img.src = src;
+        const img = new Image(); img.src = src;
         img.onload = () => { if (++loadedCount === totalImages) initWS(); };
-        img.onerror = () => { console.error("Не знайдено файл:", src); if (++loadedCount === totalImages) initWS(); };
+        img.onerror = () => { console.error("Не знайдено:", src); if (++loadedCount === totalImages) initWS(); };
         images[name] = img;
     }
+    function padZero(num) { return num.toString().padStart(2, '0'); }
 
-    function padZero(num) {
-        return num.toString().padStart(2, '0');
-    }
-
-    // Завантажуємо карти
-    preload('bg', 'assets/map.png');
-    preload('env', 'assets/map_env_01.png'); 
-
-    // Завантажуємо всі тіла (00 до 14)
-    for(let i = 0; i <= 14; i++) {
-        preload('body_' + padZero(i), `assets/body_${padZero(i)}.png`);
-    }
-
-    // Завантажуємо всі голови (00 до 16)
-    for(let i = 0; i <= 16; i++) {
-        preload('head_' + padZero(i), `assets/head_${padZero(i)}.png`);
-    }
+    preload('bg', 'assets/map.png'); preload('map_vote', 'assets/map_vote.png'); preload('env', 'assets/map_env_01.png'); 
+    for(let i = 0; i <= 14; i++) preload('body_' + padZero(i), `assets/body_${padZero(i)}.png`);
+    for(let i = 0; i <= 16; i++) preload('head_' + padZero(i), `assets/head_${padZero(i)}.png`);
 
     function initWS() {
         const ws = new WebSocket('ws://localhost:8080/ws');
-        ws.onmessage = (e) => {
-            try {
-                const data = JSON.parse(e.data);
-                if (data.players) render(data.players);
-            } catch (err) { console.error("Помилка даних:", err); }
-        };
+        ws.onmessage = (e) => { try { const state = JSON.parse(e.data); if (state.players) render(state); } catch (err) {} };
         ws.onclose = () => setTimeout(initWS, 2000);
     }
 
-    // Перенесення тексту з обмеженням кількості символів
     function wrapTextByChars(text, maxChars) {
-        const words = text.split(' ');
-        const lines = [];
-        let currentLine = "";
-
+        const words = text.split(' '); const lines = []; let currentLine = "";
         words.forEach(word => {
             if (word.length > maxChars) {
                 if (currentLine) { lines.push(currentLine); currentLine = ""; }
-                for (let i = 0; i < word.length; i += maxChars) {
-                    lines.push(word.substring(i, i + maxChars));
-                }
+                for (let i = 0; i < word.length; i += maxChars) lines.push(word.substring(i, i + maxChars));
             } else if (currentLine.length + word.length + (currentLine ? 1 : 0) > maxChars) {
-                lines.push(currentLine);
-                currentLine = word;
-            } else {
-                currentLine = currentLine ? currentLine + " " + word : word;
-            }
+                lines.push(currentLine); currentLine = word;
+            } else { currentLine = currentLine ? currentLine + " " + word : word; }
         });
-        if (currentLine) lines.push(currentLine);
-        return lines;
+        if (currentLine) lines.push(currentLine); return lines;
     }
 
-    function render(players) {
+    function render(state) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 1. ФОН та ОВЕРЛЕЙ
-        if (images['bg']?.complete) ctx.drawImage(images['bg'], 0, 0, canvas.width, canvas.height);
+        // ФОН
+        if (state.voteActive && images['map_vote']?.complete) { ctx.drawImage(images['map_vote'], 0, 0, canvas.width, canvas.height); } 
+        else if (images['bg']?.complete) { ctx.drawImage(images['bg'], 0, 0, canvas.width, canvas.height); }
         if (images['env']?.complete) ctx.drawImage(images['env'], 0, 0, canvas.width, canvas.height);
 
-        // СІТКА (Можна закоментувати, коли закінчиш налаштування)
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.05)"; 
-        ctx.lineWidth = 1;
-        for (let i = 0; i <= MAX_X; i++) { ctx.beginPath(); ctx.moveTo(i * TILE_SIZE, 0); ctx.lineTo(i * TILE_SIZE, canvas.height); ctx.stroke(); }
-        for (let j = 0; j <= MAX_Y; j++) { ctx.beginPath(); ctx.moveTo(0, j * TILE_SIZE); ctx.lineTo(canvas.width, j * TILE_SIZE); ctx.stroke(); }
+        // ВІДМАЛЬОВКА ЗОН 5G АТАКИ
+        if (state.attack5gActive && state.attack5gZones) {
+            ctx.fillStyle = colors.danger5G;
+            state.attack5gZones.forEach(z => {
+                const px = z.x * TILE_SIZE;
+                const py = (MAX_Y - 1 - z.y) * TILE_SIZE;
+                ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+            });
+        }
 
-        // Сортування гравців зверху вниз
-        players.sort((a, b) => b.y - a.y);
-
+        const players = state.players;
+        players.sort((a, b) => { if (b.y !== a.y) return b.y - a.y; return a.x - b.x; });
         const activeBubbles = [];
 
+        // ГРАВЦІ
         players.forEach(p => {
-            // Фізична клітинка (ноги)
             const logX = p.x * TILE_SIZE;
             const logY = (MAX_Y - 1 - p.y) * TILE_SIZE;
-
-            // Візуальний спрайт 3x3
             const spriteSize = TILE_SIZE * 3;
             const drawX = logX - TILE_SIZE;
             const drawY = logY - (TILE_SIZE * 2);
 
-            // Тінь
             ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-            ctx.beginPath();
-            ctx.ellipse(logX + 20, logY + 34, 16, 6, 0, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.ellipse(logX + 20, logY + 34, 16, 6, 0, 0, Math.PI * 2); ctx.fill();
 
-            // Динамічний вибір спрайту
-            const headKey = 'head_' + padZero(p.headId || 0);
-            const bodyKey = 'body_' + padZero(p.bodyId || 0);
-
+            const headKey = 'head_' + padZero(p.headId || 0); const bodyKey = 'body_' + padZero(p.bodyId || 0);
             if (images[bodyKey]?.complete) ctx.drawImage(images[bodyKey], drawX, drawY, spriteSize, spriteSize);
             if (images[headKey]?.complete) ctx.drawImage(images[headKey], drawX, drawY, spriteSize, spriteSize);
 
-            // ІМ'Я ПІД НОГАМИ: Зміна шрифту для Хрещених
-            if (p.status === 1) {
-                ctx.font = 'bold 22px "Times New Roman", Georgia, serif';
+            // Якщо опромінений - нік зеленіє (світиться)
+            ctx.font = 'bold 20px Georgia, serif';
+            ctx.textAlign = 'center'; 
+            if (p.isIrradiated) {
+                ctx.fillStyle = '#76ff03'; // Отруйно зелений
             } else {
-                ctx.font = 'bold 20px Arial, sans-serif';
+                ctx.fillStyle = p.status === 1 ? colors.gold : colors.silver; 
             }
-            
-            ctx.textAlign = 'center';
-            ctx.fillStyle = 'white'; // Завжди білий
-            ctx.strokeStyle = 'black';
-            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#111'; ctx.lineWidth = 4;
             ctx.strokeText(p.name, logX + 20, logY + 65);
             ctx.fillText(p.name, logX + 20, logY + 65);
 
-            // Збираємо активні повідомлення
-            if (p.message) {
-                activeBubbles.push({ text: p.message, x: logX + 20, y: drawY - 10 });
-            }
+            if (p.message) activeBubbles.push({ text: p.message, x: logX + 20, y: drawY - 10, isIrradiated: p.isIrradiated });
         });
 
-        // МАЛЮЄМО ХМАРИНКИ ЧАТУ
+        // ХМАРИНКИ ЧАТУ
         const drawnRects = [];
-        ctx.font = 'bold 24px Arial'; 
-
+        ctx.font = 'bold 22px Georgia, serif'; 
+        
         activeBubbles.forEach(b => {
             const lines = wrapTextByChars(b.text, 25);
-            let longestWidth = 0;
-            lines.forEach(l => {
-                const w = ctx.measureText(l).width;
-                if (w > longestWidth) longestWidth = w;
-            });
+            let longestWidth = 0; lines.forEach(l => { const w = ctx.measureText(l).width; if (w > longestWidth) longestWidth = w; });
+            const padding = 12; const lineHeight = 26;
+            const boxWidth = longestWidth + padding * 2; const boxHeight = (lines.length * lineHeight) + padding + 4;
+            let finalX = b.x - (boxWidth / 2); let finalY = b.y - boxHeight;
 
-            const padding = 12;
-            const lineHeight = 28;
-            const boxWidth = longestWidth + padding * 2;
-            const boxHeight = (lines.length * lineHeight) + padding + 4;
-
-            let finalX = b.x - (boxWidth / 2);
-            let finalY = b.y - boxHeight;
-
-            // Тримаємо в межах екрана по X
-            if (finalX < 10) finalX = 10;
-            if (finalX + boxWidth > canvas.width - 10) finalX = canvas.width - boxWidth - 10;
-
-            // Алгоритм розштовхування (якщо хмаринки накладаються)
-            let collision = true;
-            let attempts = 0;
+            if (finalX < 10) finalX = 10; if (finalX + boxWidth > canvas.width - 10) finalX = canvas.width - boxWidth - 10;
+            let collision = true; let attempts = 0;
             while (collision && attempts < 15) {
                 collision = false;
                 for (let r of drawnRects) {
-                    if (finalX < r.x + r.w + 5 && finalX + boxWidth + 5 > r.x &&
-                        finalY < r.y + r.h + 5 && finalY + boxHeight + 5 > r.y) {
-                        collision = true;
-                        finalY = r.y - boxHeight - 10;
-                        break;
+                    if (finalX < r.x + r.w + 5 && finalX + boxWidth + 5 > r.x && finalY < r.y + r.h + 5 && finalY + boxHeight + 5 > r.y) {
+                        collision = true; finalY = r.y - boxHeight - 10; break;
                     }
                 }
                 attempts++;
             }
-
-            // Тримаємо в межах екрана по Y (щоб не вилетіли за стелю)
             if (finalY < 10) finalY = 10;
-
             drawnRects.push({ x: finalX, y: finalY, w: boxWidth, h: boxHeight });
 
-            // Візуал хмаринки
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-            ctx.strokeStyle = '#000';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            if (ctx.roundRect) {
-                ctx.roundRect(finalX, finalY, boxWidth, boxHeight, 12);
-            } else {
-                ctx.rect(finalX, finalY, boxWidth, boxHeight);
-            }
-            ctx.fill();
-            ctx.stroke();
-
-            // Текст всередині
-            ctx.fillStyle = '#000';
-            ctx.textAlign = 'left';
-            lines.forEach((line, index) => {
-                ctx.fillText(line, finalX + padding, finalY + padding + (index * lineHeight) + 20);
-            });
+            ctx.fillStyle = colors.parchment; 
+            // Якщо опромінений - контур хмаринки отруйно зелений
+            ctx.strokeStyle = b.isIrradiated ? '#76ff03' : colors.ink; 
+            ctx.lineWidth = 3; ctx.beginPath(); 
+            if (ctx.roundRect) { ctx.roundRect(finalX, finalY, boxWidth, boxHeight, 8); } else { ctx.rect(finalX, finalY, boxWidth, boxHeight); }
+            ctx.fill(); ctx.stroke();
+            ctx.fillStyle = colors.ink; ctx.textAlign = 'left';
+            lines.forEach((line, index) => { ctx.fillText(line, finalX + padding, finalY + padding + (index * lineHeight) + 20); });
         });
+
+        // ІНТЕРФЕЙС ТАЙМЕРА 5G
+        if (state.attack5gActive) {
+            ctx.font = 'bold 36px "Arial Black", sans-serif';
+            ctx.textAlign = 'center'; 
+            ctx.fillStyle = '#ff1744'; 
+            ctx.strokeStyle = '#222'; 
+            ctx.lineWidth = 6;
+            const text5G = `⚠️ УВАГА! 5G ОПРОМІНЕННЯ: ${state.attack5gTimeLeft}с`;
+            ctx.strokeText(text5G, canvas.width / 2, 80); 
+            ctx.fillText(text5G, canvas.width / 2, 80);
+        }
+
+        // ІНТЕРФЕЙС ВІЧЕ
+        if (state.voteActive) {
+            const scoreA = state.voteScoreA || 0; const scoreB = state.voteScoreB || 0; const totalScore = scoreA + scoreB;
+            const percentA = totalScore === 0 ? 50 : (scoreA / totalScore) * 100;
+            const percentB = totalScore === 0 ? 50 : (scoreB / totalScore) * 100;
+            const uiY = 30; const barWidth = 640; const barHeight = 36; const startX = (canvas.width - barWidth) / 2;
+            const optA = state.voteOptionA || "ЗА"; const optB = state.voteOptionB || "ПРОТИ";
+
+            ctx.font = 'bold 26px Georgia, serif'; ctx.textAlign = 'center'; ctx.fillStyle = colors.gold; ctx.strokeStyle = '#111'; ctx.lineWidth = 4;
+            const titleText = `ВІЧЕ: ${state.voteTopic} | ЧАС: ${state.voteTimeLeft}с`;
+            ctx.strokeText(titleText, canvas.width / 2, uiY); ctx.fillText(titleText, canvas.width / 2, uiY);
+
+            ctx.fillStyle = '#111'; ctx.fillRect(startX, uiY + 20, barWidth, barHeight);
+            ctx.fillStyle = colors.purpleLeft; ctx.fillRect(startX, uiY + 20, (barWidth * percentA) / 100, barHeight);
+            ctx.fillStyle = colors.redRight; ctx.fillRect(startX + (barWidth * percentA) / 100, uiY + 20, (barWidth * percentB) / 100, barHeight);
+            
+            ctx.strokeStyle = colors.gold; ctx.lineWidth = 3; ctx.strokeRect(startX, uiY + 20, barWidth, barHeight);
+            ctx.font = 'bold 22px Georgia, serif'; ctx.fillStyle = '#f5f5f5'; ctx.strokeStyle = '#111'; ctx.lineWidth = 3;
+            ctx.textAlign = 'left'; ctx.strokeText(`${optA}: ${scoreA}`, startX + 15, uiY + 46); ctx.fillText(`${optA}: ${scoreA}`, startX + 15, uiY + 46);
+            ctx.textAlign = 'right'; ctx.strokeText(`${optB}: ${scoreB}`, startX + barWidth - 15, uiY + 46); ctx.fillText(`${optB}: ${scoreB}`, startX + barWidth - 15, uiY + 46);
+        }
+
+        // БАНЕР РЕЗУЛЬТАТІВ ВІЧЕ
+        if (state.voteResult) {
+            const bannerY = canvas.height / 2 - 80;
+            ctx.fillStyle = colors.darkWood; ctx.fillRect(0, bannerY, canvas.width, 160);
+            ctx.strokeStyle = colors.gold; ctx.lineWidth = 4; ctx.beginPath();
+            ctx.moveTo(0, bannerY); ctx.lineTo(canvas.width, bannerY);
+            ctx.moveTo(0, bannerY + 160); ctx.lineTo(canvas.width, bannerY + 160); ctx.stroke();
+            ctx.font = 'bold 34px Georgia, serif'; ctx.textAlign = 'center'; ctx.fillStyle = colors.gold; ctx.strokeStyle = '#111'; ctx.lineWidth = 5;
+            ctx.strokeText(state.voteResult, canvas.width / 2, canvas.height / 2 + 12); ctx.fillText(state.voteResult, canvas.width / 2, canvas.height / 2 + 12);
+        }
     }
 </script>
 </body>

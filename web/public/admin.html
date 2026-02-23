@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Votan - Панель Деміурга</title>
+    <style>
+        body { font-family: sans-serif; background: #1a1a2e; color: #fff; padding: 20px; }
+        .panel { background: #16213e; padding: 20px; border-radius: 8px; max-width: 400px; border: 1px solid #0f3460; margin-bottom: 20px; }
+        h2, h3 { color: #e94560; margin-top: 0; }
+        button { background: #e94560; color: white; border: none; padding: 10px 15px; margin: 5px 0; cursor: pointer; border-radius: 4px; font-weight: bold; width: 100%; box-sizing: border-box; }
+        button:hover { background: #d03050; }
+        .btn-green { background: #2e7d32; } .btn-green:hover { background: #1b5e20; }
+        .btn-purple { background: #6a1b9a; } .btn-purple:hover { background: #4a148c; }
+        input { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border-radius: 4px; border: none; }
+        .log { background: #0f3460; padding: 10px; height: 150px; overflow-y: scroll; font-family: monospace; font-size: 12px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h2>🔥 Керування Івентами</h2>
+        
+        <input type="text" id="voteTopic" placeholder="Тема Віче" value="ВІДРУБАТИ 5G ВИШКИ?">
+        <div style="display: flex; gap: 10px;">
+            <input type="text" id="voteOpt1" placeholder="Ліво (Фіолетовий)" value="СПАЛИТИ">
+            <input type="text" id="voteOpt2" placeholder="Право (Червоний)" value="ЗАЛИШИТИ">
+        </div>
+        <button class="btn-purple" onclick="sendVote()">⚖️ Запустити Віче (60 сек)</button>
+        <button onclick="sendAdminCommand('!stop_vote')" style="background: #555;">🛑 Зупинити Віче</button>
+        
+        <hr style="border-color: #0f3460; margin: 15px 0;">
+        
+        <button class="btn-green" onclick="sendAdminCommand('!5g')">📡 Запустити 5G Атаку (20 сек)</button>
+    </div>
+
+    <div class="panel">
+        <h3>Тестування (Мок гравця)</h3>
+        <input type="text" id="customCmd" placeholder="!r5, !tk, !h1b2 або текст">
+        <button onclick="sendTestCommand()">Надіслати як тест-гравець</button>
+    </div>
+
+    <div class="log" id="log"></div>
+
+    <script>
+        const logDiv = document.getElementById('log');
+        const ws = new WebSocket('ws://localhost:8080/ws');
+        ws.onopen = () => log("✅ Підключено до ядра");
+        ws.onclose = () => log("❌ З'єднання розірвано");
+        function log(msg) { logDiv.innerHTML = `<div>${new Date().toLocaleTimeString()} - ${msg}</div>` + logDiv.innerHTML; }
+
+        function sendVote() {
+            const topic = document.getElementById('voteTopic').value;
+            const opt1 = document.getElementById('voteOpt1').value;
+            const opt2 = document.getElementById('voteOpt2').value;
+            sendAdminCommand('!віче', topic + "|" + opt1 + "|" + opt2);
+        }
+
+        function sendAdminCommand(action, payload = "") {
+            const fullAction = payload ? action + " " + payload : action;
+            ws.send(JSON.stringify({ PlayerID: "GOD_MODE_ADMIN_SECRET", PlayerName: "Деміург", Action: fullAction }));
+            log(`⚡ Адмін: ${fullAction}`);
+        }
+
+        function sendTestCommand() {
+            const val = document.getElementById('customCmd').value;
+            if (val) {
+                ws.send(JSON.stringify({ PlayerID: "test_user_01", PlayerName: "Тестер", Action: val }));
+                log(`🏃 Тест: ${val}`);
+            }
+        }
+    </script>
+</body>
+</html>
