@@ -2,7 +2,7 @@
 <html lang="uk">
 <head>
     <meta charset="UTF-8">
-    <title>Слов'яни проти Ящерів</title>
+    <title>Votan — Слов'яни проти Ящерів</title>
     <style>
         body { margin: 0; padding: 0; background-color: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
         canvas { background-color: #0a0a0a; box-shadow: 0 0 50px rgba(0,0,0,1); border: 1px solid #222; }
@@ -29,8 +29,8 @@
     const colors = {
         gold: '#D4AF37', silver: '#cfd8dc', parchment: 'rgba(238, 223, 204, 0.95)', ink: '#3e2723',
         darkWood: 'rgba(26, 18, 14, 0.9)', 
-        purpleLeft: '#6a1b9a', // Фіолетовий (Опція 1)
-        redRight: '#d32f2f',   // Червоний (Опція 2)
+        purpleLeft: '#6a1b9a', 
+        redRight: '#d32f2f',   
         danger5G: 'rgba(255, 0, 0, 0.45)',
         hpRed: '#b71c1c'
     };
@@ -43,6 +43,7 @@
     }
     function padZero(num) { return num.toString().padStart(2, '0'); }
 
+    // Активи
     preload('bg', 'assets/map.png');
     preload('map_vote', 'assets/map_vote.png'); 
     preload('env', 'assets/map_env_01.png'); 
@@ -52,7 +53,12 @@
 
     function initWS() {
         const ws = new WebSocket('ws://localhost:8080/ws');
-        ws.onmessage = (e) => { try { const state = JSON.parse(e.data); render(state); } catch (err) {} };
+        ws.onmessage = (e) => { 
+            try { 
+                const state = JSON.parse(e.data); 
+                render(state); 
+            } catch (err) { console.error("Помилка парсингу:", err); } 
+        };
         ws.onclose = () => setTimeout(initWS, 2000);
     }
 
@@ -70,158 +76,205 @@
     }
 
     function render(state) {
-        // Трясіння екрана при отриманні дамагу босом
-        if (state.bossActive && state.bossHP < lastBossHP) shakeUntil = Date.now() + 300;
-        lastBossHP = state.bossHP;
+        // --- ПІДГОТОВКА ДАНИХ (Всеїдність до PascalCase/camelCase) ---
+        const players = state.Players || state.players || [];
+        const voteActive = state.VoteActive || state.voteActive;
+        const voteTopic = state.VoteTopic || state.voteTopic || "ВІЧЕ";
+        const voteOptA = state.VoteOptionA || state.voteOptionA || "ЗА";
+        const voteOptB = state.VoteOptionB || state.voteOptionB || "ПРОТИ";
+        const voteScoreA = state.VoteScoreA || state.voteScoreA || 0;
+        const voteScoreB = state.VoteScoreB || state.voteScoreB || 0;
+        const voteTimeLeft = state.VoteTimeLeft || state.voteTimeLeft || 0;
+        const voteResult = state.VoteResult || state.voteResult;
+
+        const bossActive = state.BossActive || state.bossActive;
+        const bossHP = state.BossHP || state.bossHP || 0;
+        const bossMaxHP = state.BossMaxHP || state.bossMaxHP || 1000;
+
+        const attackActive = state.Attack5GActive || state.attack5gActive;
+        const attackZones = state.Attack5GZones || state.attack5gZones;
+
+        // Трясіння при дамагу боса
+        if (bossActive && bossHP < lastBossHP) shakeUntil = Date.now() + 300;
+        lastBossHP = bossHP;
 
         ctx.save();
         if (Date.now() < shakeUntil) ctx.translate(Math.random() * 12 - 6, Math.random() * 12 - 6);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         // 1. ФОН
-        if (state.voteActive && images['map_vote']?.complete) {
+        if (voteActive && images['map_vote']?.complete) {
             ctx.drawImage(images['map_vote'], 0, 0, canvas.width, canvas.height);
         } else if (images['bg']?.complete) {
             ctx.drawImage(images['bg'], 0, 0, canvas.width, canvas.height);
         }
 
-        // 2. 5G Зони
-        if (state.attack5gActive && state.attack5gZones) {
+        // 2. 5G ЗОНИ
+        if (attackActive && attackZones) {
             ctx.fillStyle = colors.danger5G;
-            state.attack5gZones.forEach(z => {
-                ctx.fillRect(z.x * TILE_SIZE, (MAX_Y - 1 - z.y) * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            attackZones.forEach(z => {
+                const zx = z.X !== undefined ? z.X : z.x;
+                const zy = z.Y !== undefined ? z.Y : z.y;
+                ctx.fillRect(zx * TILE_SIZE, (MAX_Y - 1 - zy) * TILE_SIZE, TILE_SIZE, TILE_SIZE);
             });
         }
 
-        // 3. ГРАВЦІ (Сортування для Z-індексу)
-        const players = state.players;
-        players.sort((a, b) => { if (b.y !== a.y) return b.y - a.y; return a.x - b.x; });
+        // 3. ГРАВЦІ (Сортування по Y для перспективи)
+        players.sort((a, b) => (b.Y !== undefined ? b.Y : b.y) - (a.Y !== undefined ? a.Y : a.y));
         const activeBubbles = [];
 
         players.forEach(p => {
-            const logX = p.x * TILE_SIZE;
-            const logY = (MAX_Y - 1 - p.y) * TILE_SIZE;
+            const px = p.X !== undefined ? p.X : p.x;
+            const py = p.Y !== undefined ? p.Y : p.y;
+            const pName = p.Name || p.name;
+            const pStatus = p.Status !== undefined ? p.Status : p.status;
+            const pHead = p.HeadID !== undefined ? p.HeadID : p.headId;
+            const pBody = p.BodyID !== undefined ? p.BodyID : p.bodyId;
+            const pIrrad = p.IsIrradiated || p.isIrradiated;
+            const pMsg = p.Message || p.message;
+
+            const logX = px * TILE_SIZE;
+            const logY = (MAX_Y - 1 - py) * TILE_SIZE;
             const drawX = logX - TILE_SIZE;
             const drawY = logY - (TILE_SIZE * 2);
 
+            // Тінь
             ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
             ctx.beginPath(); ctx.ellipse(logX + 20, logY + 34, 16, 6, 0, 0, Math.PI * 2); ctx.fill();
 
-            const hKey = 'head_' + padZero(p.headId || 0);
-            const bKey = 'body_' + padZero(p.bodyId || 0);
+            // Скін
+            const hKey = 'head_' + padZero(pHead || 0);
+            const bKey = 'body_' + padZero(pBody || 0);
             if (images[bKey]?.complete) ctx.drawImage(images[bKey], drawX, drawY, TILE_SIZE*3, TILE_SIZE*3);
             if (images[hKey]?.complete) ctx.drawImage(images[hKey], drawX, drawY, TILE_SIZE*3, TILE_SIZE*3);
 
+            // Ім'я
             ctx.font = 'bold 20px Georgia, serif';
             ctx.textAlign = 'center'; 
-            ctx.fillStyle = p.isIrradiated ? '#76ff03' : (p.status === 1 ? colors.gold : colors.silver); 
+            ctx.fillStyle = pIrrad ? '#76ff03' : (pStatus === 1 ? colors.gold : colors.silver); 
             ctx.strokeStyle = '#111'; ctx.lineWidth = 4;
-            ctx.strokeText(p.name, logX + 20, logY + 65);
-            ctx.fillText(p.name, logX + 20, logY + 65);
+            ctx.strokeText(pName, logX + 20, logY + 65);
+            ctx.fillText(pName, logX + 20, logY + 65);
 
-            if (p.message) activeBubbles.push({ text: p.message, x: logX + 20, y: drawY - 10, isIrradiated: p.isIrradiated });
+            if (pMsg) activeBubbles.push({ text: pMsg, x: logX + 20, y: drawY - 10, isIrradiated: pIrrad });
         });
 
-        // 4. ОВЕРЛЕЙ КАРТИ (Об'єкти та дерева)
+        // 4. ОВЕРЛЕЙ (Дерева/Об'єкти)
         if (images['env']?.complete) ctx.drawImage(images['env'], 0, 0, canvas.width, canvas.height);
 
-        // 5. БОС (Малюємо поверх оверлею, розмір 384x384)
-        if (state.bossActive && images['boss']?.complete) {
-            const bossW = 384;
-            const bossH = 384;
-            const bx = (canvas.width - bossW) / 2;
-            const by = 110; 
-
+        // 5. БОС
+        if (bossActive && images['boss']?.complete) {
+            const bossW = 384; const bossH = 384;
+            const bx = (canvas.width - bossW) / 2; const by = 110; 
             const scale = 1 + Math.sin(Date.now() / 600) * 0.015;
             ctx.save();
-            ctx.translate(bx + bossW/2, by + bossH/2);
-            ctx.scale(scale, scale);
-            
-            if (Date.now() < shakeUntil) {
-                ctx.filter = 'brightness(1.8) sepia(1) saturate(20) hue-rotate(-50deg)';
-            }
-            
+            ctx.translate(bx + bossW/2, by + bossH/2); ctx.scale(scale, scale);
+            if (Date.now() < shakeUntil) ctx.filter = 'brightness(1.8) sepia(1) saturate(20) hue-rotate(-50deg)';
             ctx.drawImage(images['boss'], -bossW/2, -bossH/2, bossW, bossH);
             ctx.restore();
         }
 
-        // 6. ХМАРИНКИ ЧАТУ (Стиль "Пергамент")
-        const drawnRects = [];
+        // 6. ХМАРИНКИ ЧАТУ (Адаптивні під текст)
         ctx.font = 'bold 22px Georgia, serif'; 
-        activeBubbles.forEach(b => {
-            const lines = wrapTextByChars(b.text, 25);
-            let lw = 0; lines.forEach(l => { let w = ctx.measureText(l).width; if (w > lw) lw = w; });
-            const boxW = lw + 24; const boxH = (lines.length * 26) + 16;
-            let fx = b.x - (boxW / 2); let fy = b.y - boxH;
+        const drawnRects = [];
 
-            if (fx < 10) fx = 10; if (fx + boxW > canvas.width - 10) fx = canvas.width - boxW - 10;
+        activeBubbles.forEach(b => {
+            const lines = wrapTextByChars(b.text, 25); // розбиваємо по 25 символів
             
-            let attempts = 0; let collision = true;
-            while (collision && attempts < 10) {
+            // Вимірюємо найдовший рядок, щоб дізнатися точну ширину хмаринки
+            let maxLineWidth = 0;
+            lines.forEach(l => {
+                const metrics = ctx.measureText(l);
+                if (metrics.width > maxLineWidth) maxLineWidth = metrics.width;
+            });
+
+            const padding = 15;
+            const lineHeight = 28;
+            const boxW = maxLineWidth + (padding * 2);
+            const boxH = (lines.length * lineHeight) + (padding * 1.5);
+
+            // Початкові координати над головою
+            let fx = b.x - (boxW / 2);
+            let fy = b.y - boxH - 10;
+
+            // Захист від виходу за краї екрана
+            if (fx < 10) fx = 10;
+            if (fx + boxW > canvas.width - 10) fx = canvas.width - boxW - 10;
+            if (fy < 10) fy = 10;
+
+            // Захист від накладання хмаринок одна на одну
+            let attempts = 0;
+            let collision = true;
+            while (collision && attempts < 5) {
                 collision = false;
                 for (let r of drawnRects) {
-                    if (fx < r.x + r.w + 5 && fx + boxW + 5 > r.x && fy < r.y + r.h + 5 && fy + boxH + 5 > r.y) {
-                        collision = true; fy = r.y - boxH - 10; break;
+                    if (fx < r.x + r.w && fx + boxW > r.x && fy < r.y + r.h && fy + boxH > r.y) {
+                        collision = true;
+                        fy = r.y - boxH - 10; // підіймаємо вище, якщо заважає інша хмарка
+                        break;
                     }
                 }
                 attempts++;
             }
-            if (fy < 10) fy = 10;
             drawnRects.push({ x: fx, y: fy, w: boxW, h: boxH });
 
-            ctx.fillStyle = colors.parchment; ctx.strokeStyle = b.isIrradiated ? '#76ff03' : colors.ink; 
-            ctx.lineWidth = 3; ctx.beginPath(); 
-            if (ctx.roundRect) ctx.roundRect(fx, fy, boxW, boxH, 8); else ctx.rect(fx, fy, boxW, boxH);
-            ctx.fill(); ctx.stroke();
-            ctx.fillStyle = colors.ink; ctx.textAlign = 'left';
-            lines.forEach((l, i) => ctx.fillText(l, fx + 12, fy + 12 + (i * 26) + 20));
+            // Малюємо "пергамент"
+            ctx.fillStyle = colors.parchment;
+            ctx.strokeStyle = b.isIrradiated ? '#76ff03' : colors.ink;
+            ctx.lineWidth = 3;
+            
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(fx, fy, boxW, boxH, 10);
+            } else {
+                ctx.rect(fx, fy, boxW, boxH);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            // Малюємо текст
+            ctx.fillStyle = colors.ink;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top'; // ставимо прив'язку до верху рядка
+            
+            lines.forEach((l, i) => {
+                ctx.fillText(l, fx + padding, fy + padding + (i * lineHeight));
+            });
         });
 
-        // 7. ІНТЕРФЕЙСИ
-        
-        // BOSS HP BAR
-        if (state.bossActive) {
-            const bw = 500; const bh = 25; const bx = (canvas.width - bw) / 2; const by = 60;
-            ctx.font = 'bold 22px Georgia, serif';
-            ctx.fillStyle = colors.gold; ctx.strokeStyle = 'black'; ctx.lineWidth = 4;
-            ctx.textAlign = 'center';
-            ctx.strokeText("ВЕЛИКИЙ ЯЩЕР-ДЕМІУРГ", canvas.width / 2, by - 12);
-            ctx.fillText("ВЕЛИКИЙ ЯЩЕР-ДЕМІУРГ", canvas.width / 2, by - 12);
-            ctx.fillStyle = '#111'; ctx.fillRect(bx, by, bw, bh);
-            const hpWidth = (state.bossHP / state.bossMaxHP) * bw;
-            ctx.fillStyle = colors.hpRed; ctx.fillRect(bx, by, hpWidth, bh);
-            ctx.strokeStyle = colors.gold; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
+        // 7. HP БОСА
+        if (bossActive) {
+            const bw = 500; const bh = 25; const bx = (canvas.width - bw) / 2;
+            ctx.fillStyle = '#111'; ctx.fillRect(bx, 60, bw, bh);
+            ctx.fillStyle = colors.hpRed; ctx.fillRect(bx, 60, (bossHP / bossMaxHP) * bw, bh);
+            ctx.strokeStyle = colors.gold; ctx.strokeRect(bx, 60, bw, bh);
         }
 
-        // ВІЧЕ
-        if (state.voteActive) {
-            const total = (state.voteScoreA || 0) + (state.voteScoreB || 0);
-            const pA = total === 0 ? 50 : (state.voteScoreA / total) * 100;
-            const barW = 640; const barX = (canvas.width - barW) / 2; const uiY = 30;
-            const optA = state.voteOptionA || "ЗА"; const optB = state.voteOptionB || "ПРОТИ";
-
-            ctx.font = 'bold 26px Georgia, serif'; ctx.textAlign = 'center'; ctx.fillStyle = colors.gold; ctx.strokeStyle = '#111'; ctx.lineWidth = 4;
-            ctx.strokeText(`ВІЧЕ: ${state.voteTopic} | ${state.voteTimeLeft}с`, canvas.width/2, uiY);
-            ctx.fillText(`ВІЧЕ: ${state.voteTopic} | ${state.voteTimeLeft}с`, canvas.width/2, uiY);
-
-            ctx.fillStyle = '#111'; ctx.fillRect(barX, uiY + 20, barW, 36);
-            ctx.fillStyle = colors.purpleLeft; ctx.fillRect(barX, uiY + 20, (barW * pA) / 100, 36);
-            ctx.fillStyle = colors.redRight; ctx.fillRect(barX + (barW * pA) / 100, uiY + 20, (barW * (100-pA)) / 100, 36);
+        // 8. ВІЧЕ
+        if (voteActive) {
+            const total = voteScoreA + voteScoreB;
+            const pA = total === 0 ? 50 : (voteScoreA / total) * 100;
+            const barW = 640; const barX = (canvas.width - barW) / 2;
             
-            ctx.strokeStyle = colors.gold; ctx.lineWidth = 3; ctx.strokeRect(barX, uiY + 20, barW, 36);
-            ctx.font = 'bold 22px Georgia, serif'; ctx.fillStyle = '#f5f5f5'; ctx.strokeStyle = '#111'; ctx.lineWidth = 3;
-            ctx.textAlign = 'left'; ctx.strokeText(`${optA}: ${state.voteScoreA}`, barX + 15, uiY + 46); ctx.fillText(`${optA}: ${state.voteScoreA}`, barX + 15, uiY + 46);
-            ctx.textAlign = 'right'; ctx.strokeText(`${optB}: ${state.voteScoreB}`, barX + barW - 15, uiY + 46); ctx.fillText(`${optB}: ${state.voteScoreB}`, barX + barW - 15, uiY + 46);
+            ctx.font = 'bold 26px Georgia'; ctx.fillStyle = colors.gold; ctx.textAlign = 'center';
+            ctx.fillText(`${voteTopic} | ${voteTimeLeft}с`, canvas.width/2, 40);
+
+            ctx.fillStyle = colors.purpleLeft; ctx.fillRect(barX, 50, (barW * pA)/100, 36);
+            ctx.fillStyle = colors.redRight; ctx.fillRect(barX + (barW * pA)/100, 50, (barW * (100-pA))/100, 36);
+            ctx.strokeStyle = colors.gold; ctx.strokeRect(barX, 50, barW, 36);
+            
+            ctx.font = 'bold 20px Georgia'; ctx.fillStyle = 'white'; ctx.textAlign = 'left';
+            ctx.fillText(`${voteOptA}: ${voteScoreA}`, barX + 10, 75);
+            ctx.textAlign = 'right';
+            ctx.fillText(`${voteOptB}: ${voteScoreB}`, barX + barW - 10, 75);
         }
 
-        // РЕЗУЛЬТАТ ВІЧЕ (Золотий банер)
-        if (state.voteResult) {
-            const vy = canvas.height / 2 - 80;
-            ctx.fillStyle = colors.darkWood; ctx.fillRect(0, vy, canvas.width, 160);
-            ctx.strokeStyle = colors.gold; ctx.lineWidth = 4; ctx.strokeRect(-5, vy, canvas.width + 10, 160);
-            ctx.font = 'bold 34px Georgia, serif'; ctx.textAlign = 'center'; ctx.fillStyle = colors.gold;
-            ctx.strokeText(state.voteResult, canvas.width / 2, canvas.height / 2 + 12);
-            ctx.fillText(state.voteResult, canvas.width / 2, canvas.height / 2 + 12);
+        // 9. РЕЗУЛЬТАТ ВІЧЕ
+        if (voteResult) {
+            ctx.fillStyle = colors.darkWood; ctx.fillRect(0, canvas.height/2 - 80, canvas.width, 160);
+            ctx.strokeStyle = colors.gold; ctx.lineWidth = 4; ctx.strokeRect(0, canvas.height/2 - 80, canvas.width, 160);
+            ctx.fillStyle = colors.gold; ctx.textAlign = 'center'; ctx.font = 'bold 34px Georgia';
+            ctx.fillText(voteResult, canvas.width/2, canvas.height/2 + 10);
         }
 
         ctx.restore();
