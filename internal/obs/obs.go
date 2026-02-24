@@ -2,6 +2,7 @@ package obs
 
 import (
 	"log"
+	"sync"
 	"time"
 
 	"github.com/andreykaipov/goobs"
@@ -12,6 +13,10 @@ import (
 
 type Client struct {
 	conn *goobs.Client
+
+	// Додаємо захист від "гонитви анімацій"
+	mu      sync.Mutex
+	fadeGen int
 }
 
 func NewClient(addr, password string) (*Client, error) {
@@ -22,7 +27,14 @@ func NewClient(addr, password string) (*Client, error) {
 	return &Client{conn: c}, nil
 }
 
-// SetSourceEnabled вмикає або вимикає джерело
+// nextFadeGen збільшує лічильник анімацій і повертає його
+func (c *Client) nextFadeGen() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.fadeGen++
+	return c.fadeGen
+}
+
 func (c *Client) SetSourceEnabled(sceneName, sourceName string, enabled bool) {
 	idReq := &sceneitems.GetSceneItemIdParams{
 		SceneName:  &sceneName,
@@ -47,8 +59,11 @@ func (c *Client) SetSourceEnabled(sceneName, sourceName string, enabled bool) {
 	}
 }
 
-// FadeSourceOpacity плавно змінює прозорість
+// FadeSourceOpacity тепер перевіряє, чи не скасували її
 func (c *Client) FadeSourceOpacity(sourceName, filterName string, startOpacity, endOpacity float64, duration time.Duration) {
+	// Фіксуємо "покоління" цієї конкретної анімації
+	currentGen := c.nextFadeGen()
+
 	steps := 20
 	sleepTime := duration / time.Duration(steps)
 	stepSize := (endOpacity - startOpacity) / float64(steps)
@@ -57,6 +72,15 @@ func (c *Client) FadeSourceOpacity(sourceName, filterName string, startOpacity, 
 	bTrue := true
 
 	for i := 0; i <= steps; i++ {
+		// Перевіряємо, чи не запустив хтось іншу анімацію або SetOpacity
+		c.mu.Lock()
+		if c.fadeGen != currentGen {
+			c.mu.Unlock()
+			// Якщо покоління змінилося — тихо вбиваємо цю горутину
+			return
+		}
+		c.mu.Unlock()
+
 		req := &filters.SetSourceFilterSettingsParams{
 			SourceName: &sourceName,
 			FilterName: &filterName,
@@ -77,8 +101,11 @@ func (c *Client) FadeSourceOpacity(sourceName, filterName string, startOpacity, 
 	}
 }
 
-// НОВА ФУНКЦІЯ: SetOpacity миттєво встановлює прозорість (без спаму запитами)
+// SetOpacity миттєво встановлює прозорість і ВБИВАЄ всі старі плавні анімації
 func (c *Client) SetOpacity(sourceName, filterName string, opacity float64) {
+	// Збільшуємо лічильник, щоб усі старі FadeSourceOpacity одразу зупинилися
+	c.nextFadeGen()
+
 	bTrue := true
 	req := &filters.SetSourceFilterSettingsParams{
 		SourceName: &sourceName,
@@ -95,7 +122,6 @@ func (c *Client) SetOpacity(sourceName, filterName string, opacity float64) {
 	}
 }
 
-// RestartMedia примусово запускає медіа-джерело з початку
 func (c *Client) RestartMedia(inputName string) {
 	action := "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
 	req := &mediainputs.TriggerMediaInputActionParams{
