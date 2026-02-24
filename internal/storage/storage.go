@@ -89,6 +89,18 @@ func (db *DB) LoadAllUsers() ([]UserRow, error) {
 	return users, nil
 }
 
+func (db *DB) GetUser(id string) (*UserRow, error) {
+	row := db.sql.QueryRow("SELECT name, x, y, status, is_irradiated, head_id, body_id FROM users WHERE id = ?", id)
+
+	var u UserRow
+	u.ID = id
+	err := row.Scan(&u.Name, &u.X, &u.Y, &u.Status, &u.IsIrradiated, &u.HeadID, &u.BodyID)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
 func (db *DB) Close() {
 	db.sql.Close()
 }

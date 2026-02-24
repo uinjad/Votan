@@ -42,13 +42,15 @@ func main() {
 	// 4. Ініціалізуємо ядро гри
 	gameLoop := engine.NewGame(db, obsClient)
 
+	// ДОДАНО: Відновлюємо гравців з бази даних (зберігає стан після рестарту)
+	gameLoop.RestorePlayersFromDB()
+
 	// 5. Запускаємо ігровий цикл (тіки) в окремій горутині
 	go gameLoop.Start()
 
-	// 6. Підключаємо прослуховування YouTube чату
+	// 6. Підключаємо прослуховування YouTube чату (Скрапер "Всі повідомлення")
 	videoID := os.Getenv("YOUTUBE_VIDEO_ID")
 	if videoID != "" {
-		// Запускаємо скрапер чату паралельно, передаючи йому канал команд рушія
 		go youtube.ListenChat(videoID, gameLoop.CommandChan)
 	} else {
 		fmt.Println("⚠️ YOUTUBE_VIDEO_ID не знайдено в .env. Грати можна тільки через адмінку.")

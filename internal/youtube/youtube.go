@@ -1,180 +1,237 @@
 package youtube
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"Votan/internal/engine"
 )
 
 var (
-	apiKeyRegex        = regexp.MustCompile(`"INNERTUBE_API_KEY":"([^"]+)"`)
-	clientVersionRegex = regexp.MustCompile(`"clientVersion":"([^"]+)"`)
-	continuationRegex  = regexp.MustCompile(`"continuation":"([^"]+)"`)
+	initialDataRegex = regexp.MustCompile(`(?:window\["ytInitialData"\]|var ytInitialData|ytInitialData)\s*=\s*({.+?});`)
+	apiKeyRegex      = regexp.MustCompile(`"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"`)
+	clientVersion    = regexp.MustCompile(`"clientVersion"\s*:\s*"([^"]+)"`)
 )
 
-// Виносимо структуру для зручності та додаємо ВСІ необхідні json-теги
-type YTChatResponse struct {
-	ContinuationContents struct {
-		LiveChatContinuation struct {
-			Actions []struct {
-				AddChatItemAction struct {
-					Item struct {
-						LiveChatTextMessageRenderer struct {
-							Message struct {
-								Runs []struct {
-									Text string `json:"text"`
-								} `json:"runs"`
-							} `json:"message"`
-							AuthorName struct {
-								SimpleText string `json:"simpleText"`
-							} `json:"authorName"`
-							AuthorExternalChannelId string `json:"authorExternalChannelId"`
-						} `json:"liveChatTextMessageRenderer"`
-					} `json:"item"`
-				} `json:"addChatItemAction"`
-			} `json:"actions"`
-			Continuations []struct {
-				TimedContinuationData struct {
-					Continuation string `json:"continuation"`
-					TimeoutMs    int    `json:"timeoutMs"`
-				} `json:"timedContinuationData"`
-				InvalidationContinuationData struct {
-					Continuation string `json:"continuation"`
-					TimeoutMs    int    `json:"timeoutMs"`
-				} `json:"invalidationContinuationData"`
-			} `json:"continuations"`
-		} `json:"liveChatContinuation"`
-	} `json:"continuationContents"`
+// РЕКУРСИВНИЙ ПОШУК КЛЮЧА В JSON
+func findKey(obj interface{}, key string) interface{} {
+	switch val := obj.(type) {
+	case map[string]interface{}:
+		if v, ok := val[key]; ok {
+			return v
+		}
+		for _, v := range val {
+			if res := findKey(v, key); res != nil {
+				return res
+			}
+		}
+	case []interface{}:
+		for _, v := range val {
+			if res := findKey(v, key); res != nil {
+				return res
+			}
+		}
+	}
+	return nil
 }
 
-// ListenChat працює як анонімний глядач, збираючи повідомлення
 func ListenChat(videoID string, commandChan chan<- engine.Command) {
-	fmt.Println("📡 [Скрапер] Підключаємось до трансляції як анонімний глядач...")
+	chatURL := "https://www.youtube.com/live_chat?v=" + videoID
+	fmt.Printf("📺 Запуск парсера YouTube... (Слухаємо: %s)\n", chatURL)
 
 	client := &http.Client{Timeout: 10 * time.Second}
+	req, _ := http.NewRequest("GET", chatURL, nil)
 
-	// 1. Отримуємо початкову HTML-сторінку
-	req, _ := http.NewRequest("GET", "https://www.youtube.com/live_chat?v="+videoID, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Cookie", "CONSENT=YES+cb.20230101-00-p0.en+FX+478;")
+	req.Header.Set("Cookie", "CONSENT=YES+cb.20230509-09-p0.en+FX+999;")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println("❌ [YouTube] Помилка завантаження чату:", err)
+		fmt.Println("❌ Помилка підключення до YouTube:", err)
 		return
 	}
 	defer resp.Body.Close()
 
-	htmlBytes, _ := io.ReadAll(resp.Body)
-	htmlStr := string(htmlBytes)
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyStr := string(bodyBytes)
 
-	// 2. Витягуємо ключі
-	apiKeyMatches := apiKeyRegex.FindStringSubmatch(htmlStr)
-	clientVerMatches := clientVersionRegex.FindStringSubmatch(htmlStr)
-	continuationMatches := continuationRegex.FindStringSubmatch(htmlStr)
+	apiKeyMatches := apiKeyRegex.FindStringSubmatch(bodyStr)
+	clientVerMatches := clientVersion.FindStringSubmatch(bodyStr)
+	initialDataMatches := initialDataRegex.FindStringSubmatch(bodyStr)
 
-	if len(apiKeyMatches) < 2 || len(continuationMatches) < 2 {
-		fmt.Println("❌ [YouTube] Не вдалося знайти чат. Стрім точно запущено або це прямий ефір?")
+	if len(apiKeyMatches) < 2 || len(initialDataMatches) < 2 {
+		fmt.Println("❌ Не вдалося знайти ytInitialData. Стрім недоступний або має обмеження.")
 		return
 	}
 
 	apiKey := apiKeyMatches[1]
-	clientVersion := "2.20231214.00.00"
+	clientVer := "2.20230509.00.00"
 	if len(clientVerMatches) >= 2 {
-		clientVersion = clientVerMatches[1]
+		clientVer = clientVerMatches[1]
 	}
-	continuation := continuationMatches[1]
 
-	fmt.Println("✅ [Скрапер] Успішно підключено! Починаємо читати чат.")
+	var ytData map[string]interface{}
+	err = json.Unmarshal([]byte(initialDataMatches[1]), &ytData)
+	if err != nil {
+		fmt.Println("❌ Помилка парсингу JSON від YouTube:", err)
+		return
+	}
+
+	continuationToken := extractLiveChatToken(ytData)
+	if continuationToken == "" {
+		fmt.Println("❌ Токен чату не знайдено. Схоже, це не прямий ефір або чат вимкнено.")
+		return
+	}
+
+	fmt.Println("✅ YouTube Chat підключено (Режим: Всі повідомлення)! Очікування...")
 
 	for {
-		// 3. Формуємо запит до youtubei
-		payload := map[string]interface{}{
-			"context": map[string]interface{}{
-				"client": map[string]string{
-					"clientName":    "WEB",
-					"clientVersion": clientVersion,
-				},
-			},
-			"continuation": continuation,
-		}
+		time.Sleep(1500 * time.Millisecond)
 
-		payloadBytes, _ := json.Marshal(payload)
+		payload := fmt.Sprintf(`{
+			"context": {"client": {"clientName": "WEB", "clientVersion": "%s"}},
+			"continuation": "%s"
+		}`, clientVer, continuationToken)
 
-		apiURL := "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key=" + apiKey
-		apiReq, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(payloadBytes))
-		apiReq.Header.Set("Content-Type", "application/json")
-		apiReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+		postReq, _ := http.NewRequest("POST", "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key="+apiKey, strings.NewReader(payload))
+		postReq.Header.Set("Content-Type", "application/json")
+		postReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+		postReq.Header.Set("Cookie", "CONSENT=YES+cb.20230509-09-p0.en+FX+999;")
 
-		apiResp, err := client.Do(apiReq)
+		postResp, err := client.Do(postReq)
 		if err != nil {
-			fmt.Println("⚠️ [YouTube] Помилка з'єднання, повторюємо через 5с...")
-			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		var chatData YTChatResponse
-		err = json.NewDecoder(apiResp.Body).Decode(&chatData)
-		apiResp.Body.Close()
+		var chatData map[string]interface{}
+		json.NewDecoder(postResp.Body).Decode(&chatData)
+		postResp.Body.Close()
 
-		if err != nil {
-			fmt.Println("⚠️ [YouTube] Помилка парсингу відповіді, можливо змінили API.")
-			time.Sleep(5 * time.Second)
-			continue
+		newContinuation := updateContinuation(chatData, continuationToken)
+		if newContinuation != continuationToken {
+			continuationToken = newContinuation
+			parseAndSendMessages(chatData, commandChan)
+		} else {
+			time.Sleep(2 * time.Second)
 		}
+	}
+}
 
-		contents := chatData.ContinuationContents.LiveChatContinuation
-
-		// 4. Парсимо повідомлення
-		for _, action := range contents.Actions {
-			renderer := action.AddChatItemAction.Item.LiveChatTextMessageRenderer
-			if renderer.AuthorName.SimpleText == "" {
-				continue
+func extractLiveChatToken(ytData map[string]interface{}) string {
+	// 1. Шукаємо меню перемикання чату
+	if itemsObj := findKey(ytData, "subMenuItems"); itemsObj != nil {
+		if items, ok := itemsObj.([]interface{}); ok {
+			// Індекс 0 = Top Chat (Цікаві), Індекс 1 = Live Chat (Всі повідомлення)
+			targetIndex := 0
+			if len(items) > 1 {
+				targetIndex = 1 // Жорстко обираємо друге меню, ігноруючи текст (локалізацію)
 			}
 
-			fullMessage := ""
-			for _, run := range renderer.Message.Runs {
-				fullMessage += run.Text
-			}
-
-			if fullMessage != "" {
-				fmt.Printf("💬 [YouTube] %s: %s\n", renderer.AuthorName.SimpleText, fullMessage)
-				commandChan <- engine.Command{
-					PlayerID:   renderer.AuthorExternalChannelId,
-					PlayerName: renderer.AuthorName.SimpleText,
-					Action:     fullMessage,
+			if itemMap, ok := items[targetIndex].(map[string]interface{}); ok {
+				if cont, ok := itemMap["continuation"].(map[string]interface{}); ok {
+					if cmd, ok := cont["continuationCommand"].(map[string]interface{}); ok {
+						if token, ok := cmd["token"].(string); ok {
+							return token
+						}
+					}
 				}
 			}
 		}
+	}
 
-		// 5. Оновлюємо токен для наступного запиту
-		timeoutMs := 3000
-		if len(contents.Continuations) > 0 {
-			contData := contents.Continuations[0]
-			if contData.TimedContinuationData.Continuation != "" {
-				continuation = contData.TimedContinuationData.Continuation
-				timeoutMs = contData.TimedContinuationData.TimeoutMs
-			} else if contData.InvalidationContinuationData.Continuation != "" {
-				continuation = contData.InvalidationContinuationData.Continuation
-				timeoutMs = contData.InvalidationContinuationData.TimeoutMs
+	// 2. Якщо меню немає, шукаємо просто перший ліпший токен оновлення
+	if rcdObj := findKey(ytData, "reloadContinuationData"); rcdObj != nil {
+		if rcdMap, ok := rcdObj.(map[string]interface{}); ok {
+			if token, ok := rcdMap["continuation"].(string); ok {
+				return token
 			}
-		} else {
-			// ВАЖЛИВО: Якщо масив Continuations порожній - чат завершився!
-			fmt.Println("🛑 [YouTube] Чат закрито або стрім завершився.")
-			break
+		}
+	}
+
+	return ""
+}
+
+func updateContinuation(data map[string]interface{}, fallback string) string {
+	if timed := findKey(data, "timedContinuationData"); timed != nil {
+		if tMap, ok := timed.(map[string]interface{}); ok {
+			if cont, ok := tMap["continuation"].(string); ok {
+				return cont
+			}
+		}
+	}
+	if inval := findKey(data, "invalidationContinuationData"); inval != nil {
+		if iMap, ok := inval.(map[string]interface{}); ok {
+			if cont, ok := iMap["continuation"].(string); ok {
+				return cont
+			}
+		}
+	}
+	return fallback
+}
+
+func parseAndSendMessages(data map[string]interface{}, commandChan chan<- engine.Command) {
+	actionsObj := findKey(data, "actions")
+	if actionsObj == nil {
+		return
+	}
+
+	actions, ok := actionsObj.([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, action := range actions {
+		act, ok := action.(map[string]interface{})
+		if !ok {
+			continue
 		}
 
-		// Захист від надто частих запитів (щоб YT не забанив IP)
-		if timeoutMs < 2000 {
-			timeoutMs = 2000
+		if addChatItem, ok := act["addChatItemAction"].(map[string]interface{}); ok {
+			item, ok := addChatItem["item"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			if textMsg, ok := item["liveChatTextMessageRenderer"].(map[string]interface{}); ok {
+				authorName := "Глядач"
+				if anObj := findKey(textMsg, "authorName"); anObj != nil {
+					if simple, ok := anObj.(map[string]interface{})["simpleText"].(string); ok {
+						authorName = simple
+					}
+				}
+
+				authorId := ""
+				if idObj, ok := textMsg["authorExternalChannelId"].(string); ok {
+					authorId = idObj
+				}
+
+				var fullText string
+				if messageObj, ok := textMsg["message"].(map[string]interface{}); ok {
+					if runs, ok := messageObj["runs"].([]interface{}); ok {
+						for _, r := range runs {
+							if runMap, ok := r.(map[string]interface{}); ok {
+								if t, ok := runMap["text"].(string); ok {
+									fullText += t
+								}
+							}
+						}
+					}
+				}
+
+				if fullText != "" && authorId != "" {
+					commandChan <- engine.Command{
+						PlayerID:   authorId,
+						PlayerName: authorName,
+						Action:     fullText,
+					}
+				}
+			}
 		}
-		time.Sleep(time.Duration(timeoutMs) * time.Millisecond)
 	}
 }

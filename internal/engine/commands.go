@@ -34,18 +34,39 @@ func (g *Game) processCommand(cmd Command) {
 	// ОБРОБКА ГРАВЦІВ
 	player, exists := g.Players[cmd.PlayerID]
 	if !exists {
-		spawnPos, ok := g.findFreeSpawn() // ТА САМА ПОМИЛКА БУЛА ТУТ
+		spawnPos, ok := g.findFreeSpawn()
 		if !ok {
 			return
 		}
-		player = &Player{
-			ID:         cmd.PlayerID,
-			Name:       strings.TrimPrefix(cmd.PlayerName, "@"),
-			Pos:        spawnPos,
-			LastActive: time.Now(),
+
+		// ПЕРЕВІРКА БАЗИ: Чи є цей гравець в історії (якщо його кікнули, або він зайшов після паузи)
+		dbUser, err := g.DB.GetUser(cmd.PlayerID)
+
+		if err == nil && dbUser != nil {
+			// Гравець знайомий — відновлюємо його гени R1A1a та зовнішній вигляд
+			player = &Player{
+				ID:           cmd.PlayerID,
+				Name:         strings.TrimPrefix(cmd.PlayerName, "@"),
+				Pos:          spawnPos, // Завжди спавнимо на вільному місці, щоб не застряг
+				Status:       dbUser.Status,
+				IsIrradiated: dbUser.IsIrradiated,
+				HeadID:       dbUser.HeadID,
+				BodyID:       dbUser.BodyID,
+				LastActive:   time.Now(),
+			}
+		} else {
+			// Абсолютно новий гравець (сірий)
+			player = &Player{
+				ID:         cmd.PlayerID,
+				Name:       strings.TrimPrefix(cmd.PlayerName, "@"),
+				Pos:        spawnPos,
+				LastActive: time.Now(),
+			}
 		}
+
 		g.Players[cmd.PlayerID] = player
 		g.Grid[spawnPos] = player
+		// Одразу записуємо або оновлюємо його в базі
 		g.DB.UpsertUser(player.ID, player.Name, player.Pos.X, player.Pos.Y)
 	}
 
@@ -114,7 +135,7 @@ func (g *Game) triggerVictoryMedia() {
 	g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeSong, true)
 	g.OBS.RestartMedia(OBSSubscribeSong)
 	g.OBS.SetOpacity(OBSWebcamSource, "Fade", 1.0)
-	time.Sleep(20 * time.Second)
+	time.Sleep(30 * time.Second)
 	g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeMovie, false)
 }
 
@@ -153,6 +174,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 			g.VoteOptionB = "ПРОТИ"
 		}
 		g.VoteEndTime = time.Now().Add(config.VoteDuration)
+		fmt.Println("⚖️ Люцифер запустив ВІЧЕ:", g.VoteTopic)
 
 	case actionLower == "!stop_vote":
 		if g.VoteActive {
@@ -226,7 +248,6 @@ func (g *Game) start5GAttack() {
 	}
 }
 
-// ПРИЧИНА ПОМИЛКИ БУЛА В ТОМУ, ЩО ЦЬОГО МЕТОДУ НЕ БУЛО В ФАЙЛІ
 func (g *Game) findFreeSpawn() (Pos, bool) {
 	for y := 1; y < config.MaxY-1; y++ {
 		for x := 1; x < config.MaxX-1; x++ {

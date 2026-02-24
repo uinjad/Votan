@@ -3,8 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <title>Votan — Слов'яни проти Ящерів</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Russo+One&display=swap" rel="stylesheet">
+    
     <style>
-        body { margin: 0; padding: 0; background-color: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        body { margin: 0; padding: 0; background-color: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: 'Russo One', sans-serif; }
         canvas { background-color: #0a0a0a; box-shadow: 0 0 50px rgba(0,0,0,1); border: 1px solid #222; }
     </style>
 </head>
@@ -22,28 +27,47 @@
     const images = {};
     let loadedCount = 0;
     const totalImages = 36; 
+    let isInitialLoaded = false; 
+
+    let imagesLoaded = false;
+    let fontsLoaded = false;
+
+    // Чекаємо завантаження шрифту
+    document.fonts.ready.then(() => {
+        fontsLoaded = true;
+        checkStart();
+    });
 
     let lastBossHP = 0;
     let shakeUntil = 0;
 
     const colors = {
         gold: '#D4AF37', silver: '#cfd8dc', parchment: 'rgba(238, 223, 204, 0.95)', ink: '#3e2723',
-        darkWood: 'rgba(26, 18, 14, 0.9)', 
-        purpleLeft: '#6a1b9a', 
-        redRight: '#d32f2f',   
-        danger5G: 'rgba(255, 0, 0, 0.45)',
-        hpRed: '#b71c1c'
+        darkWood: 'rgba(26, 18, 14, 0.9)', purpleLeft: '#6a1b9a', redRight: '#d32f2f',   
+        danger5G: 'rgba(255, 0, 0, 0.45)', hpRed: '#b71c1c'
     };
+
+    function checkStart() {
+        if (imagesLoaded && fontsLoaded) {
+            isInitialLoaded = true;
+            initWS();
+        }
+    }
 
     function preload(name, src) {
         const img = new Image(); img.src = src;
-        img.onload = () => { if (++loadedCount === totalImages) initWS(); };
-        img.onerror = () => { console.error("Не знайдено:", src); if (++loadedCount === totalImages) initWS(); };
+        img.onload = () => { 
+            loadedCount++;
+            if (loadedCount === totalImages) {
+                imagesLoaded = true;
+                checkStart(); 
+            }
+        };
+        img.onerror = () => { console.error("Не знайдено:", src); loadedCount++; if (loadedCount === totalImages) { imagesLoaded = true; checkStart(); } };
         images[name] = img;
     }
     function padZero(num) { return num.toString().padStart(2, '0'); }
 
-    // Активи
     preload('bg', 'assets/map.png');
     preload('map_vote', 'assets/map_vote.png'); 
     preload('env', 'assets/map_env_01.png'); 
@@ -57,7 +81,7 @@
             try { 
                 const state = JSON.parse(e.data); 
                 render(state); 
-            } catch (err) { console.error("Помилка парсингу:", err); } 
+            } catch (err) {} 
         };
         ws.onclose = () => setTimeout(initWS, 2000);
     }
@@ -76,7 +100,8 @@
     }
 
     function render(state) {
-        // --- ПІДГОТОВКА ДАНИХ (Всеїдність до PascalCase/camelCase) ---
+        if (!isInitialLoaded) return; 
+
         const players = state.Players || state.players || [];
         const voteActive = state.VoteActive || state.voteActive;
         const voteTopic = state.VoteTopic || state.voteTopic || "ВІЧЕ";
@@ -86,15 +111,12 @@
         const voteScoreB = state.VoteScoreB || state.voteScoreB || 0;
         const voteTimeLeft = state.VoteTimeLeft || state.voteTimeLeft || 0;
         const voteResult = state.VoteResult || state.voteResult;
-
         const bossActive = state.BossActive || state.bossActive;
         const bossHP = state.BossHP || state.bossHP || 0;
         const bossMaxHP = state.BossMaxHP || state.bossMaxHP || 1000;
-
         const attackActive = state.Attack5GActive || state.attack5gActive;
         const attackZones = state.Attack5GZones || state.attack5gZones;
 
-        // Трясіння при дамагу боса
         if (bossActive && bossHP < lastBossHP) shakeUntil = Date.now() + 300;
         lastBossHP = bossHP;
 
@@ -102,14 +124,12 @@
         if (Date.now() < shakeUntil) ctx.translate(Math.random() * 12 - 6, Math.random() * 12 - 6);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 1. ФОН
         if (voteActive && images['map_vote']?.complete) {
             ctx.drawImage(images['map_vote'], 0, 0, canvas.width, canvas.height);
         } else if (images['bg']?.complete) {
             ctx.drawImage(images['bg'], 0, 0, canvas.width, canvas.height);
         }
 
-        // 2. 5G ЗОНИ
         if (attackActive && attackZones) {
             ctx.fillStyle = colors.danger5G;
             attackZones.forEach(z => {
@@ -119,8 +139,15 @@
             });
         }
 
-        // 3. ГРАВЦІ (Сортування по Y для перспективи)
-        players.sort((a, b) => (b.Y !== undefined ? b.Y : b.y) - (a.Y !== undefined ? a.Y : a.y));
+        players.sort((a, b) => {
+            const ay = a.Y !== undefined ? a.Y : a.y;
+            const by = b.Y !== undefined ? b.Y : b.y;
+            if (ay !== by) return by - ay; 
+            const aid = String(a.ID || a.id || "");
+            const bid = String(b.ID || b.id || "");
+            return aid.localeCompare(bid); 
+        });
+
         const activeBubbles = [];
 
         players.forEach(p => {
@@ -138,31 +165,26 @@
             const drawX = logX - TILE_SIZE;
             const drawY = logY - (TILE_SIZE * 2);
 
-            // Тінь
             ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
             ctx.beginPath(); ctx.ellipse(logX + 20, logY + 34, 16, 6, 0, 0, Math.PI * 2); ctx.fill();
 
-            // Скін
             const hKey = 'head_' + padZero(pHead || 0);
             const bKey = 'body_' + padZero(pBody || 0);
             if (images[bKey]?.complete) ctx.drawImage(images[bKey], drawX, drawY, TILE_SIZE*3, TILE_SIZE*3);
             if (images[hKey]?.complete) ctx.drawImage(images[hKey], drawX, drawY, TILE_SIZE*3, TILE_SIZE*3);
 
-            // Ім'я
-            ctx.font = 'bold 20px Georgia, serif';
+            ctx.font = '18px "Russo One", sans-serif';
             ctx.textAlign = 'center'; 
             ctx.fillStyle = pIrrad ? '#76ff03' : (pStatus === 1 ? colors.gold : colors.silver); 
-            ctx.strokeStyle = '#111'; ctx.lineWidth = 4;
+            ctx.strokeStyle = '#111'; ctx.lineWidth = 3;
             ctx.strokeText(pName, logX + 20, logY + 65);
             ctx.fillText(pName, logX + 20, logY + 65);
 
             if (pMsg) activeBubbles.push({ text: pMsg, x: logX + 20, y: drawY - 10, isIrradiated: pIrrad });
         });
 
-        // 4. ОВЕРЛЕЙ (Дерева/Об'єкти)
         if (images['env']?.complete) ctx.drawImage(images['env'], 0, 0, canvas.width, canvas.height);
 
-        // 5. БОС
         if (bossActive && images['boss']?.complete) {
             const bossW = 384; const bossH = 384;
             const bx = (canvas.width - bossW) / 2; const by = 110; 
@@ -174,109 +196,81 @@
             ctx.restore();
         }
 
-        // 6. ХМАРИНКИ ЧАТУ (Адаптивні під текст)
-        ctx.font = 'bold 22px Georgia, serif'; 
         const drawnRects = [];
+        ctx.font = '20px "Russo One", sans-serif'; 
 
         activeBubbles.forEach(b => {
-            const lines = wrapTextByChars(b.text, 25); // розбиваємо по 25 символів
-            
-            // Вимірюємо найдовший рядок, щоб дізнатися точну ширину хмаринки
+            const lines = wrapTextByChars(b.text, 25);
             let maxLineWidth = 0;
-            lines.forEach(l => {
-                const metrics = ctx.measureText(l);
-                if (metrics.width > maxLineWidth) maxLineWidth = metrics.width;
-            });
-
-            const padding = 15;
-            const lineHeight = 28;
+            lines.forEach(l => { const metrics = ctx.measureText(l); if (metrics.width > maxLineWidth) maxLineWidth = metrics.width; });
+            const padding = 15; const lineHeight = 26;
             const boxW = maxLineWidth + (padding * 2);
             const boxH = (lines.length * lineHeight) + (padding * 1.5);
 
-            // Початкові координати над головою
-            let fx = b.x - (boxW / 2);
-            let fy = b.y - boxH - 10;
-
-            // Захист від виходу за краї екрана
-            if (fx < 10) fx = 10;
-            if (fx + boxW > canvas.width - 10) fx = canvas.width - boxW - 10;
+            let fx = b.x - (boxW / 2); let fy = b.y - boxH - 10;
+            if (fx < 10) fx = 10; if (fx + boxW > canvas.width - 10) fx = canvas.width - boxW - 10;
             if (fy < 10) fy = 10;
 
-            // Захист від накладання хмаринок одна на одну
-            let attempts = 0;
-            let collision = true;
+            let attempts = 0; let collision = true;
             while (collision && attempts < 5) {
                 collision = false;
                 for (let r of drawnRects) {
                     if (fx < r.x + r.w && fx + boxW > r.x && fy < r.y + r.h && fy + boxH > r.y) {
-                        collision = true;
-                        fy = r.y - boxH - 10; // підіймаємо вище, якщо заважає інша хмарка
-                        break;
+                        collision = true; fy = r.y - boxH - 10; break;
                     }
                 }
                 attempts++;
             }
             drawnRects.push({ x: fx, y: fy, w: boxW, h: boxH });
 
-            // Малюємо "пергамент"
-            ctx.fillStyle = colors.parchment;
-            ctx.strokeStyle = b.isIrradiated ? '#76ff03' : colors.ink;
-            ctx.lineWidth = 3;
+            ctx.fillStyle = colors.parchment; ctx.strokeStyle = b.isIrradiated ? '#76ff03' : colors.ink; 
+            ctx.lineWidth = 3; ctx.beginPath(); 
+            if (ctx.roundRect) ctx.roundRect(fx, fy, boxW, boxH, 10); else ctx.rect(fx, fy, boxW, boxH);
+            ctx.fill(); ctx.stroke();
             
-            ctx.beginPath();
-            if (ctx.roundRect) {
-                ctx.roundRect(fx, fy, boxW, boxH, 10);
-            } else {
-                ctx.rect(fx, fy, boxW, boxH);
-            }
-            ctx.fill();
-            ctx.stroke();
-
-            // Малюємо текст
-            ctx.fillStyle = colors.ink;
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'top'; // ставимо прив'язку до верху рядка
-            
-            lines.forEach((l, i) => {
-                ctx.fillText(l, fx + padding, fy + padding + (i * lineHeight));
-            });
+            ctx.fillStyle = colors.ink; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+            lines.forEach((l, i) => ctx.fillText(l, fx + padding, fy + padding + (i * lineHeight)));
         });
 
-        // 7. HP БОСА
         if (bossActive) {
-            const bw = 500; const bh = 25; const bx = (canvas.width - bw) / 2;
-            ctx.fillStyle = '#111'; ctx.fillRect(bx, 60, bw, bh);
-            ctx.fillStyle = colors.hpRed; ctx.fillRect(bx, 60, (bossHP / bossMaxHP) * bw, bh);
-            ctx.strokeStyle = colors.gold; ctx.strokeRect(bx, 60, bw, bh);
+            const bw = 500; const bh = 25; const bx = (canvas.width - bw) / 2; const by = 60;
+            ctx.textBaseline = 'alphabetic';
+            ctx.font = '22px "Russo One", sans-serif'; ctx.textAlign = 'center';
+            ctx.fillStyle = colors.gold; ctx.strokeStyle = 'black'; ctx.lineWidth = 3;
+            ctx.strokeText("ВЕЛИКИЙ ЯЩЕР", canvas.width / 2, by - 12); ctx.fillText("ВЕЛИКИЙ ЯЩЕР", canvas.width / 2, by - 12);
+            ctx.fillStyle = '#111'; ctx.fillRect(bx, by, bw, bh);
+            ctx.fillStyle = colors.hpRed; ctx.fillRect(bx, by, (bossHP / bossMaxHP) * bw, bh);
+            ctx.strokeStyle = colors.gold; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
         }
 
-        // 8. ВІЧЕ
-        if (voteActive) {
-            const total = voteScoreA + voteScoreB;
-            const pA = total === 0 ? 50 : (voteScoreA / total) * 100;
-            const barW = 640; const barX = (canvas.width - barW) / 2;
-            
-            ctx.font = 'bold 26px Georgia'; ctx.fillStyle = colors.gold; ctx.textAlign = 'center';
-            ctx.fillText(`${voteTopic} | ${voteTimeLeft}с`, canvas.width/2, 40);
-
-            ctx.fillStyle = colors.purpleLeft; ctx.fillRect(barX, 50, (barW * pA)/100, 36);
-            ctx.fillStyle = colors.redRight; ctx.fillRect(barX + (barW * pA)/100, 50, (barW * (100-pA))/100, 36);
-            ctx.strokeStyle = colors.gold; ctx.strokeRect(barX, 50, barW, 36);
-            
-            ctx.font = 'bold 20px Georgia'; ctx.fillStyle = 'white'; ctx.textAlign = 'left';
-            ctx.fillText(`${voteOptA}: ${voteScoreA}`, barX + 10, 75);
-            ctx.textAlign = 'right';
-            ctx.fillText(`${voteOptB}: ${voteScoreB}`, barX + barW - 10, 75);
+        if (voteActive && !voteResult) {
+            const total = voteScoreA + voteScoreB; const pA = total === 0 ? 50 : (voteScoreA / total) * 100;
+            const barW = 640; const barX = (canvas.width - barW) / 2; const uiY = 30;
+            ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'center';
+            ctx.font = '26px "Russo One", sans-serif'; ctx.fillStyle = colors.gold; ctx.strokeStyle = '#111'; ctx.lineWidth = 3;
+            ctx.strokeText(`ВІЧЕ: ${voteTopic} | ${voteTimeLeft}с`, canvas.width/2, uiY); ctx.fillText(`ВІЧЕ: ${voteTopic} | ${voteTimeLeft}с`, canvas.width/2, uiY);
+            ctx.fillStyle = '#111'; ctx.fillRect(barX, uiY + 20, barW, 36);
+            ctx.fillStyle = colors.purpleLeft; ctx.fillRect(barX, uiY + 20, (barW * pA) / 100, 36);
+            ctx.fillStyle = colors.redRight; ctx.fillRect(barX + (barW * pA) / 100, uiY + 20, (barW * (100-pA)) / 100, 36);
+            ctx.strokeStyle = colors.gold; ctx.lineWidth = 3; ctx.strokeRect(barX, uiY + 20, barW, 36);
+            ctx.font = '22px "Russo One", sans-serif'; ctx.fillStyle = '#f5f5f5'; ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
+            ctx.textAlign = 'left'; ctx.strokeText(`${voteOptA}: ${voteScoreA}`, barX + 15, uiY + 46); ctx.fillText(`${voteOptA}: ${voteScoreA}`, barX + 15, uiY + 46);
+            ctx.textAlign = 'right'; ctx.strokeText(`${voteOptB}: ${voteScoreB}`, barX + barW - 15, uiY + 46); ctx.fillText(`${voteOptB}: ${voteScoreB}`, barX + barW - 15, uiY + 46);
         }
 
-        // 9. РЕЗУЛЬТАТ ВІЧЕ
         if (voteResult) {
-            ctx.fillStyle = colors.darkWood; ctx.fillRect(0, canvas.height/2 - 80, canvas.width, 160);
-            ctx.strokeStyle = colors.gold; ctx.lineWidth = 4; ctx.strokeRect(0, canvas.height/2 - 80, canvas.width, 160);
-            ctx.fillStyle = colors.gold; ctx.textAlign = 'center'; ctx.font = 'bold 34px Georgia';
-            ctx.fillText(voteResult, canvas.width/2, canvas.height/2 + 10);
+            const vy = canvas.height / 2 - 80; ctx.textBaseline = 'middle';
+            ctx.fillStyle = colors.darkWood; ctx.fillRect(0, vy, canvas.width, 160);
+            ctx.strokeStyle = colors.gold; ctx.lineWidth = 4; ctx.strokeRect(-5, vy, canvas.width + 10, 160);
+            
+            ctx.font = '34px "Russo One", sans-serif'; 
+            ctx.textAlign = 'center'; 
+            ctx.fillStyle = colors.gold;
+            ctx.lineWidth = 2; 
+            ctx.strokeStyle = '#000';
+            ctx.strokeText(voteResult, canvas.width / 2, canvas.height / 2); 
+            ctx.fillText(voteResult, canvas.width / 2, canvas.height / 2);
         }
-
         ctx.restore();
     }
 </script>

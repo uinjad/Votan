@@ -45,8 +45,28 @@ func NewGame(db *storage.DB, obsClient *obs.Client) *Game {
 		OBS:          obsClient,
 	}
 	g.initStaticMap()
-	g.loadPlayersFromDB()
 	return g
+}
+
+func (g *Game) RestorePlayersFromDB() {
+	users, err := g.DB.LoadAllUsers()
+	if err != nil {
+		fmt.Println("❌ Помилка відновлення бази гравців:", err)
+		return
+	}
+	for _, u := range users {
+		pos := Pos{X: u.X, Y: u.Y}
+		if pos.X >= 0 && pos.X < config.MaxX && pos.Y >= 0 && pos.Y < config.MaxY && g.Grid[pos] == nil && !g.BlockedCells[pos] {
+			player := &Player{
+				ID: u.ID, Name: u.Name, Pos: pos, LastActive: time.Now(),
+				Status: u.Status, IsIrradiated: u.IsIrradiated,
+				HeadID: u.HeadID, BodyID: u.BodyID,
+			}
+			g.Players[u.ID] = player
+			g.Grid[pos] = player
+		}
+	}
+	fmt.Printf("✅ Відновлено %d слов'ян з бази даних\n", len(g.Players))
 }
 
 func (g *Game) initStaticMap() {
@@ -60,24 +80,8 @@ func (g *Game) initStaticMap() {
 	}
 }
 
-func (g *Game) loadPlayersFromDB() {
-	savedUsers, _ := g.DB.LoadAllUsers()
-	for _, u := range savedUsers {
-		pos := Pos{X: u.X, Y: u.Y}
-		if pos.X >= 0 && pos.X < config.MaxX && pos.Y >= 0 && pos.Y < config.MaxY && g.Grid[pos] == nil && !g.BlockedCells[pos] {
-			player := &Player{
-				ID: u.ID, Name: u.Name, Pos: pos, LastActive: time.Now(),
-				Status: u.Status, IsIrradiated: u.IsIrradiated,
-				HeadID: u.HeadID, BodyID: u.BodyID,
-			}
-			g.Players[u.ID] = player
-			g.Grid[pos] = player
-		}
-	}
-}
-
 func (g *Game) Start() {
-	ticker := time.NewTicker(config.TickRate)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	cleanupTicker := time.NewTicker(1 * time.Minute)
 	for {
 		select {
@@ -113,6 +117,7 @@ func (g *Game) tick() {
 
 	g.processVoteEvent()
 	g.process5GEvent()
+	g.processDebuffs() // Знімаємо 5G, якщо час вийшов
 
 	for _, p := range g.Players {
 		if p.RemainingSteps > 0 {
@@ -154,10 +159,12 @@ func (g *Game) calculateCurrentScores() (int, int) {
 	scoreA, scoreB := 0, 0
 	midX := config.MaxX / 2
 	for _, p := range g.Players {
-		weight := 1
-		if p.Status == 1 {
-			weight = 3
+		// Тіні не мають права голосу
+		if p.Status != 1 {
+			continue
 		}
+		// Хрещені дають 1 голос
+		weight := 1
 		if p.Pos.X <= midX {
 			scoreA += weight
 		} else {
@@ -177,7 +184,17 @@ func (g *Game) process5GEvent() {
 				g.DB.SetIrradiated(p.ID, true)
 			}
 		}
-		g.Attack5GZones = nil
+		g.Attack5GZones = nil // Очищаємо зони
+	}
+}
+
+func (g *Game) processDebuffs() {
+	now := time.Now()
+	for _, p := range g.Players {
+		if p.IsIrradiated && now.After(p.IrradiatedUntil) {
+			p.IsIrradiated = false
+			g.DB.SetIrradiated(p.ID, false)
+		}
 	}
 }
 
@@ -204,6 +221,12 @@ func (g *Game) GetState() GameState {
 
 	if g.VoteActive {
 		state.VoteTimeLeft = int(time.Until(g.VoteEndTime).Seconds())
+	}
+
+	if g.Attack5GActive {
+		for z := range g.Attack5GZones {
+			state.Attack5GZones = append(state.Attack5GZones, z)
+		}
 	}
 
 	for _, p := range g.Players {
