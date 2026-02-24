@@ -13,17 +13,20 @@ import (
 
 var skinRegex = regexp.MustCompile(`(?i)^!h(\d+)b(\d+)$`)
 
+const OBSSceneName = "Main"
+const OBSWebcamSource = "camera"
+const OBSSubscribeMovie = "subscribeMovie"
+const OBSSubscribeSong = "subscribeSong"
+
 func (g *Game) processCommand(cmd Command) {
 	actionStr := strings.TrimSpace(cmd.Action)
 	actionLower := strings.ToLower(actionStr)
 
-	// 👑 АДМІНКА
 	if cmd.PlayerID == config.AdminSecret {
 		g.handleAdminCommand(actionStr, actionLower)
 		return
 	}
 
-	// ОБРОБКА ГРАВЦІВ
 	player, exists := g.Players[cmd.PlayerID]
 	if !exists {
 		spawnPos, ok := g.findFreeSpawn()
@@ -41,7 +44,6 @@ func (g *Game) processCommand(cmd Command) {
 
 	player.LastActive = time.Now()
 
-	// ☢️ ДЕБАФ ОПРОМІНЕННЯ
 	if player.IsIrradiated && actionStr != "" {
 		phrases := []string{"Хочу ревакцинуватись!", "Піду шукати роботу в офісі!", "Слава Ящерам!", "5G - це здоров'я!"}
 		player.LastMessage = phrases[rand.Intn(len(phrases))]
@@ -53,17 +55,25 @@ func (g *Game) processCommand(cmd Command) {
 	if actionStr != "" {
 		isCommand := false
 
-		// ⚔️ КОМАНДА УДАРУ ПО БОСУ
 		if actionLower == "!hit" && g.BossActive {
 			g.BossHP -= config.BossHitDamage
 			if g.BossHP <= 0 {
 				g.BossHP = 0
 				g.BossActive = false
-				fmt.Println("⚔️ Ящера повалено силами русичів!")
+
+				if g.OBS != nil {
+					go g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeMovie, true)
+					go g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeSong, true)
+					go g.OBS.RestartMedia(OBSSubscribeMovie)
+					go g.OBS.RestartMedia(OBSSubscribeSong)
+
+					// ВИПРАВЛЕНО: Миттєве повернення без анімації
+					go g.OBS.SetOpacity(OBSWebcamSource, "Fade", 1.0)
+				}
+				fmt.Println("⚔️ Ящера повалено силами русичів! Запущено анімацію підписки.")
 			}
 			isCommand = true
 
-			// 🎭 ЗМІНА СКІНУ (тільки для хрещених)
 		} else if matches := skinRegex.FindStringSubmatch(actionLower); matches != nil {
 			if player.Status == 1 {
 				h, _ := strconv.Atoi(matches[1])
@@ -79,7 +89,6 @@ func (g *Game) processCommand(cmd Command) {
 			}
 			isCommand = true
 
-			// 🏃 РУХ ГРАВЦЯ
 		} else if strings.HasPrefix(actionLower, "!") {
 			dx, dy, steps := parseAction(actionLower)
 			if steps > 0 {
@@ -90,7 +99,6 @@ func (g *Game) processCommand(cmd Command) {
 			}
 		}
 
-		// Якщо це не команда, то це звичайне повідомлення в чат
 		if !isCommand && !strings.HasPrefix(actionStr, "!") {
 			player.LastMessage = actionStr
 			player.MessageTime = time.Now()
@@ -99,7 +107,6 @@ func (g *Game) processCommand(cmd Command) {
 }
 
 func (g *Game) handleAdminCommand(actionStr, actionLower string) {
-	// ВІЧЕ
 	if strings.HasPrefix(actionLower, "!віче") {
 		g.VoteActive = true
 		g.VoteResult = ""
@@ -123,7 +130,6 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 			g.VoteEndTime = time.Now().Add(-1 * time.Second)
 		}
 
-		// 5G АТАКА
 	} else if actionLower == "!5g" {
 		g.Attack5GActive = true
 		g.Attack5GEndTime = time.Now().Add(config.Attack5GDuration)
@@ -137,16 +143,45 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 			}
 		}
 
-		// БОС (ЯЩЕР)
 	} else if actionLower == "!ящер" {
-		g.BossActive = true
-		g.BossHP = config.BossMaxHP
+		if !g.BossActive {
+			g.BossActive = true
+			g.BossHP = config.BossMaxHP
 
-	} else if actionLower == "!stop_boss" {
+			if g.OBS != nil {
+				go g.OBS.FadeSourceOpacity(OBSWebcamSource, "Fade", 1.0, 0.0, 20*time.Second)
+			}
+		}
+
+	} else if actionLower == "!kill_boss" {
+		if g.BossActive {
+			g.BossActive = false
+			g.BossHP = 0
+
+			if g.OBS != nil {
+				go g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeMovie, true)
+				go g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeSong, true)
+				go g.OBS.RestartMedia(OBSSubscribeMovie)
+				go g.OBS.RestartMedia(OBSSubscribeSong)
+
+				// ВИПРАВЛЕНО: Миттєве повернення без анімації
+				go g.OBS.SetOpacity(OBSWebcamSource, "Fade", 1.0)
+			}
+			fmt.Println("👑 Деміург власноруч знищив Ящера!")
+		}
+
+	} else if actionLower == "!fix_obs" {
 		g.BossActive = false
 		g.BossHP = 0
+		if g.OBS != nil {
+			go g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeMovie, false)
+			go g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeSong, false)
 
-		// КЕРУВАННЯ ГРАВЦЯМИ (Кік та Хрещення з адмінки)
+			// ВИПРАВЛЕНО: Миттєве повернення без анімації
+			go g.OBS.SetOpacity(OBSWebcamSource, "Fade", 1.0)
+		}
+		fmt.Println("🔧 Стан OBS та Ящера примусово скинуто до дефолтного!")
+
 	} else if strings.HasPrefix(actionLower, "!kick") {
 		targetID := strings.TrimSpace(strings.TrimPrefix(actionStr, "!kick"))
 		if p, ok := g.Players[targetID]; ok {
@@ -169,6 +204,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 	}
 }
 
+// ... findFreeSpawn та parseAction залишаються без змін ...
 func (g *Game) findFreeSpawn() (Pos, bool) {
 	for y := 1; y < config.MaxY-1; y++ {
 		for x := 1; x < config.MaxX-1; x++ {

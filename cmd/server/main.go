@@ -6,46 +6,55 @@ import (
 	"os"
 
 	"Votan/internal/engine"
+	"Votan/internal/obs"
 	"Votan/internal/storage"
-	"Votan/internal/websocket" // Пакет, який ми зараз створимо
-	"Votan/internal/youtube"   // Пакет для чату
+	"Votan/internal/websocket"
+	"Votan/internal/youtube"
 
 	"github.com/joho/godotenv"
 )
 
 func main() {
-	fmt.Println("📜 Сервер «Слов’яни проти Ящерів» стартує...")
-
-	// 1. Завантажуємо секрети з .env
+	// 1. Завантажуємо конфігурацію з файлу .env
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("⚠️ Файл .env не знайдено, використовуються системні змінні оточення")
+		log.Println("⚠️ Не знайдено файл .env, використовуються системні змінні оточення.")
 	}
 
-	// 2. Ініціалізуємо базу даних
+	// 2. Ініціалізуємо базу даних SQLite
 	db, err := storage.InitDB("votan_game.db")
 	if err != nil {
-		log.Fatal("Критична помилка БД:", err)
+		log.Fatal("❌ Помилка ініціалізації БД:", err)
 	}
 	defer db.Close()
+	fmt.Println("✅ База даних успішно підключена.")
 
-	// 3. Ініціалізуємо рушій
-	gameLoop := engine.NewGame(db)
-	go gameLoop.Start()
-
-	// 4. Дістаємо ключі з оточення
-	videoID := os.Getenv("YOUTUBE_VIDEO_ID")
-	apiKey := os.Getenv("YOUTUBE_API_KEY")
-
-	// Перевірка наявності ключів
-	if videoID == "" || apiKey == "" {
-		log.Println("⚠️ Попередження: YouTube ключі не задані. Працюватиме лише Адмін-панель.")
+	// 3. Підключаємо керування OBS WebSocket
+	obsAddr := os.Getenv("OBS_ADDR")
+	obsPass := os.Getenv("OBS_PASS")
+	obsClient, err := obs.NewClient(obsAddr, obsPass)
+	if err != nil {
+		log.Printf("⚠️ OBS не підключено (%v). Гра працюватиме без автоматизації сцени.", err)
 	} else {
-		// 5. Запускаємо прослуховування чату (у фоні)
-		go youtube.ListenChat(videoID, apiKey, gameLoop.CommandChan)
+		fmt.Println("✅ OBS WebSocket підключено успішно!")
 	}
 
-	// 6. Запускаємо WebSocket сервер (він заблокує main, щоб програма не закрилась)
-	// Передаємо gameLoop, щоб сервер мав доступ до CommandChan та GetState()
+	// 4. Ініціалізуємо ядро гри
+	gameLoop := engine.NewGame(db, obsClient)
+
+	// 5. Запускаємо ігровий цикл (тіки) в окремій горутині
+	go gameLoop.Start()
+
+	// 6. Підключаємо прослуховування YouTube чату
+	videoID := os.Getenv("YOUTUBE_VIDEO_ID")
+	if videoID != "" {
+		// Запускаємо скрапер чату паралельно, передаючи йому канал команд рушія
+		go youtube.ListenChat(videoID, gameLoop.CommandChan)
+	} else {
+		fmt.Println("⚠️ YOUTUBE_VIDEO_ID не знайдено в .env. Грати можна тільки через адмінку.")
+	}
+
+	// 7. Запускаємо WebSocket сервер для трансляції екрану гри
+	fmt.Println("🚀 Ефірний сервер запущено! Відкрий http://localhost:8080")
 	websocket.StartServer(gameLoop)
 }

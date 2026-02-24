@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"Votan/internal/config"
+	"Votan/internal/obs"
 	"Votan/internal/storage"
 )
 
@@ -16,6 +17,7 @@ type Game struct {
 	BlockedCells map[Pos]bool
 	CommandChan  chan Command
 	DB           *storage.DB
+	OBS          *obs.Client
 
 	// Івент "Віче"
 	VoteActive    bool
@@ -36,13 +38,14 @@ type Game struct {
 	BossHP     int
 }
 
-func NewGame(db *storage.DB) *Game {
+func NewGame(db *storage.DB, obsClient *obs.Client) *Game {
 	g := &Game{
 		Players:      make(map[string]*Player),
 		Grid:         make(map[Pos]*Player),
 		BlockedCells: make(map[Pos]bool),
 		CommandChan:  make(chan Command, 1000),
 		DB:           db,
+		OBS:          obsClient,
 	}
 
 	g.initStaticMap()
@@ -137,18 +140,15 @@ func (g *Game) tick() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	// 1. Команди
 	commandsToProcess := len(g.CommandChan)
 	for i := 0; i < commandsToProcess; i++ {
 		cmd := <-g.CommandChan
 		g.processCommand(cmd)
 	}
 
-	// 2. Івенти
 	g.processVoteEvent()
 	g.process5GEvent()
 
-	// 3. Стан гравців
 	for _, p := range g.Players {
 		if p.IsIrradiated && time.Now().After(p.IrradiatedUntil) {
 			p.IsIrradiated = false

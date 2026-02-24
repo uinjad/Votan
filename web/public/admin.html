@@ -18,6 +18,7 @@
         button { padding: 10px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; text-transform: uppercase; transition: 0.2s; }
         .btn-full { width: 100%; margin-bottom: 5px; }
         .btn-boss { background: #b71c1c; color: white; }
+        .btn-baptize { background: #D4AF37; color: #000; }
         .btn-vote { background: #4a148c; color: white; }
         .btn-5g { background: #1b5e20; color: white; }
         .btn-mock { background: #0277bd; color: white; }
@@ -33,8 +34,8 @@
         
         .player-actions { display: flex; gap: 4px; flex-shrink: 0; }
         .btn-action { font-size: 12px; padding: 5px 8px; min-width: 35px; }
-        .btn-baptize { background: #D4AF37; color: #000; }
-        .btn-baptize.done { background: #333; color: #555; cursor: default; }
+        .btn-action.btn-baptize { background: #D4AF37; color: #000; }
+        .btn-action.btn-baptize.done { background: #333; color: #555; cursor: default; }
         .btn-kick { background: #333; color: #f44; border: 1px solid #444; }
         .btn-kick:hover { background: #f44; color: #fff; }
         .btn-target { background: #0277bd; color: #fff; }
@@ -61,8 +62,9 @@
         <div class="section">
             <label>ІВЕНТИ ТА БОСИ</label>
             <button class="btn-boss btn-full" onclick="sendAdmin('!ящер')">🐉 ВИКЛИКАТИ ЯЩЕРА</button>
-            <button class="btn-stop btn-full" onclick="sendAdmin('!stop_boss')">❌ ПРИБРАТИ ЯЩЕРА</button>
+            <button class="btn-baptize btn-full" onclick="sendAdmin('!kill_boss')">💀 ВБИТИ ЯЩЕРА (Епічно)</button>
             <button class="btn-5g btn-full" onclick="sendAdmin('!5g')">📡 АТАКА 5G</button>
+            <button class="btn-kick btn-full" onclick="sendAdmin('!fix_obs')" style="margin-top: 10px;">🔧 ФІКС КАМЕРИ (Скинути OBS)</button>
         </div>
 
         <div class="section">
@@ -113,18 +115,15 @@
         const list = document.getElementById('playerList');
         const newIDs = new Set(players.map(p => p.id));
 
-        // 1. Видаляємо тих, хто пішов
         Array.from(list.children).forEach(child => {
             if (!newIDs.has(child.dataset.id)) child.remove();
         });
 
-        // 2. Оновлюємо існуючих або додаємо нових
         players.forEach(p => {
             let item = list.querySelector(`[data-id="${p.id}"]`);
             const isBaptized = (p.status === 1);
             const nameStr = `${p.name} ${isBaptized ? '👑' : ''}`;
 
-            // Шаблон вмісту для порівняння
             const content = `
                 <div class="player-info">
                     <span class="player-name">${nameStr}</span>
@@ -145,7 +144,6 @@
                 item.innerHTML = content;
                 list.appendChild(item);
             } else if (item.innerHTML !== content) {
-                // Оновлюємо тільки якщо щось змінилося (це прибирає блимання)
                 item.innerHTML = content;
             }
         });
