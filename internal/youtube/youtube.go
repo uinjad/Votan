@@ -1,9 +1,11 @@
 package youtube
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -18,7 +20,129 @@ var (
 	clientVersion    = regexp.MustCompile(`"clientVersion"\s*:\s*"([^"]+)"`)
 )
 
-// РЕКУРСИВНИЙ ПОШУК КЛЮЧА В JSON
+// ListenChat wraps the chat scraper in a 20-minute rotation loop.
+// This prevents silent connection drops due to YouTube rate limiting and session expiry.
+func ListenChat(videoID string, commandChan chan<- engine.Command) {
+	for {
+		log.Printf("youtube: starting chat session for video %s (20m rotation)", videoID)
+
+		// Create a context that will automatically cancel after 20 minutes
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+
+		// Run the actual scraper, passing the context
+		scrapeChatSession(ctx, videoID, commandChan)
+
+		// Ensure resources are freed
+		cancel()
+
+		log.Printf("youtube: session rotated. reconnecting in 5s...")
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// scrapeChatSession handles the HTTP requests and message parsing for a single session.
+// It will exit gracefully when the provided context is canceled.
+func scrapeChatSession(ctx context.Context, videoID string, commandChan chan<- engine.Command) {
+	chatURL := "https://www.youtube.com/live_chat?v=" + videoID
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, "GET", chatURL, nil)
+	if err != nil {
+		log.Printf("youtube: failed to create request: %v", err)
+		return
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Cookie", "CONSENT=YES+cb.20230509-09-p0.en+FX+999;")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("youtube: connection error: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyStr := string(bodyBytes)
+
+	apiKeyMatches := apiKeyRegex.FindStringSubmatch(bodyStr)
+	clientVerMatches := clientVersion.FindStringSubmatch(bodyStr)
+	initialDataMatches := initialDataRegex.FindStringSubmatch(bodyStr)
+
+	if len(apiKeyMatches) < 2 || len(initialDataMatches) < 2 {
+		log.Printf("youtube: failed to find ytInitialData. Stream might be offline or restricted.")
+		return
+	}
+
+	apiKey := apiKeyMatches[1]
+	clientVer := "2.20230509.00.00"
+	if len(clientVerMatches) >= 2 {
+		clientVer = clientVerMatches[1]
+	}
+
+	var ytData map[string]interface{}
+	err = json.Unmarshal([]byte(initialDataMatches[1]), &ytData)
+	if err != nil {
+		log.Printf("youtube: json parse error: %v", err)
+		return
+	}
+
+	continuationToken := extractLiveChatToken(ytData)
+	if continuationToken == "" {
+		log.Printf("youtube: chat token not found. Chat might be disabled.")
+		return
+	}
+
+	log.Println("youtube: connected successfully, waiting for messages...")
+
+	for {
+		// Check if 20 minutes have passed, exit if true
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(1500 * time.Millisecond): // Original 1.5s delay
+		}
+
+		payload := fmt.Sprintf(`{
+            "context": {"client": {"clientName": "WEB", "clientVersion": "%s"}},
+            "continuation": "%s"
+        }`, clientVer, continuationToken)
+
+		postReq, err := http.NewRequestWithContext(ctx, "POST", "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key="+apiKey, strings.NewReader(payload))
+		if err != nil {
+			continue
+		}
+
+		postReq.Header.Set("Content-Type", "application/json")
+		postReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+		postReq.Header.Set("Cookie", "CONSENT=YES+cb.20230509-09-p0.en+FX+999;")
+
+		postResp, err := client.Do(postReq)
+		if err != nil {
+			continue
+		}
+
+		var chatData map[string]interface{}
+		json.NewDecoder(postResp.Body).Decode(&chatData)
+		postResp.Body.Close()
+
+		newContinuation := updateContinuation(chatData, continuationToken)
+		if newContinuation != continuationToken {
+			continuationToken = newContinuation
+			parseAndSendMessages(chatData, commandChan)
+		} else {
+			// Check context again before the fallback sleep
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}
+}
+
+// findKey recursively searches for a specific key within an unknown JSON structure.
 func findKey(obj interface{}, key string) interface{} {
 	switch val := obj.(type) {
 	case map[string]interface{}:
@@ -40,97 +164,12 @@ func findKey(obj interface{}, key string) interface{} {
 	return nil
 }
 
-func ListenChat(videoID string, commandChan chan<- engine.Command) {
-	chatURL := "https://www.youtube.com/live_chat?v=" + videoID
-	fmt.Printf("📺 Запуск парсера YouTube... (Слухаємо: %s)\n", chatURL)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, _ := http.NewRequest("GET", chatURL, nil)
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Cookie", "CONSENT=YES+cb.20230509-09-p0.en+FX+999;")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		fmt.Println("❌ Помилка підключення до YouTube:", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	bodyStr := string(bodyBytes)
-
-	apiKeyMatches := apiKeyRegex.FindStringSubmatch(bodyStr)
-	clientVerMatches := clientVersion.FindStringSubmatch(bodyStr)
-	initialDataMatches := initialDataRegex.FindStringSubmatch(bodyStr)
-
-	if len(apiKeyMatches) < 2 || len(initialDataMatches) < 2 {
-		fmt.Println("❌ Не вдалося знайти ytInitialData. Стрім недоступний або має обмеження.")
-		return
-	}
-
-	apiKey := apiKeyMatches[1]
-	clientVer := "2.20230509.00.00"
-	if len(clientVerMatches) >= 2 {
-		clientVer = clientVerMatches[1]
-	}
-
-	var ytData map[string]interface{}
-	err = json.Unmarshal([]byte(initialDataMatches[1]), &ytData)
-	if err != nil {
-		fmt.Println("❌ Помилка парсингу JSON від YouTube:", err)
-		return
-	}
-
-	continuationToken := extractLiveChatToken(ytData)
-	if continuationToken == "" {
-		fmt.Println("❌ Токен чату не знайдено. Схоже, це не прямий ефір або чат вимкнено.")
-		return
-	}
-
-	fmt.Println("✅ YouTube Chat підключено (Режим: Всі повідомлення)! Очікування...")
-
-	for {
-		time.Sleep(1500 * time.Millisecond)
-
-		payload := fmt.Sprintf(`{
-			"context": {"client": {"clientName": "WEB", "clientVersion": "%s"}},
-			"continuation": "%s"
-		}`, clientVer, continuationToken)
-
-		postReq, _ := http.NewRequest("POST", "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key="+apiKey, strings.NewReader(payload))
-		postReq.Header.Set("Content-Type", "application/json")
-		postReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-		postReq.Header.Set("Cookie", "CONSENT=YES+cb.20230509-09-p0.en+FX+999;")
-
-		postResp, err := client.Do(postReq)
-		if err != nil {
-			continue
-		}
-
-		var chatData map[string]interface{}
-		json.NewDecoder(postResp.Body).Decode(&chatData)
-		postResp.Body.Close()
-
-		newContinuation := updateContinuation(chatData, continuationToken)
-		if newContinuation != continuationToken {
-			continuationToken = newContinuation
-			parseAndSendMessages(chatData, commandChan)
-		} else {
-			time.Sleep(2 * time.Second)
-		}
-	}
-}
-
 func extractLiveChatToken(ytData map[string]interface{}) string {
-	// 1. Шукаємо меню перемикання чату
 	if itemsObj := findKey(ytData, "subMenuItems"); itemsObj != nil {
 		if items, ok := itemsObj.([]interface{}); ok {
-			// Індекс 0 = Top Chat (Цікаві), Індекс 1 = Live Chat (Всі повідомлення)
 			targetIndex := 0
 			if len(items) > 1 {
-				targetIndex = 1 // Жорстко обираємо друге меню, ігноруючи текст (локалізацію)
+				targetIndex = 1
 			}
 
 			if itemMap, ok := items[targetIndex].(map[string]interface{}); ok {
@@ -145,7 +184,6 @@ func extractLiveChatToken(ytData map[string]interface{}) string {
 		}
 	}
 
-	// 2. Якщо меню немає, шукаємо просто перший ліпший токен оновлення
 	if rcdObj := findKey(ytData, "reloadContinuationData"); rcdObj != nil {
 		if rcdMap, ok := rcdObj.(map[string]interface{}); ok {
 			if token, ok := rcdMap["continuation"].(string); ok {
