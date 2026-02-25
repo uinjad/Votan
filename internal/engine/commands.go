@@ -106,6 +106,12 @@ func (g *Game) processCommand(cmd Command) {
 				player.TargetDx = dx
 				player.TargetDy = dy
 				player.RemainingSteps = steps
+
+				// ВАЖЛИВО: Зараховуємо гравця як активного під час Віче
+				if g.VoteActive {
+					player.Voted = true
+				}
+
 				isCommand = true
 			}
 		}
@@ -159,6 +165,12 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 	case strings.HasPrefix(actionLower, "!віче"):
 		parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(actionStr, "!віче")), "|")
 		g.VoteActive = true
+
+		// ВАЖЛИВО: Коли Віче починається, всі стають неактивними "сірими" (поки не зроблять крок)
+		for _, p := range g.Players {
+			p.Voted = false
+		}
+
 		g.VoteTopic = "ВИБІР ДОЛІ"
 		if len(parts) > 0 && parts[0] != "" {
 			g.VoteTopic = parts[0]

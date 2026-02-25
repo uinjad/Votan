@@ -96,11 +96,20 @@ func (g *Game) Start() {
 func (g *Game) cleanupInactive() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	threshold := time.Now().Add(config.PlayerTimeout)
+
+	// Встановлюємо ліміт: 10 хвилин у минулому від поточного часу
+	threshold := time.Now().Add(-10 * time.Minute)
+
 	for id, p := range g.Players {
+		// Якщо остання дія гравця була раніше, ніж 10 хвилин тому
 		if p.LastActive.Before(threshold) {
+			// 1. Звільняємо клітинку на карті, щоб туди могли стати інші
 			delete(g.Grid, p.Pos)
+			// 2. Видаляємо гравця з активного списку (він зникне з екрана)
 			delete(g.Players, id)
+
+			// Примітка: Ми НЕ видаляємо його з БД (g.DB.DeleteUser),
+			// тому його скіни та статус збережуться до наступного повідомлення в чат.
 		}
 	}
 }
@@ -137,8 +146,10 @@ func (g *Game) tick() {
 
 func (g *Game) processVoteEvent() {
 	if g.VoteActive && time.Now().After(g.VoteEndTime) {
-		g.VoteActive = false
+		// Рахуємо ДО того, як вимкнути VoteActive, інакше нулі
 		scoreA, scoreB := g.calculateCurrentScores()
+		g.VoteActive = false
+
 		var winner string
 		if scoreA > scoreB {
 			winner = g.VoteOptionA
@@ -157,12 +168,23 @@ func (g *Game) processVoteEvent() {
 
 func (g *Game) calculateCurrentScores() (int, int) {
 	scoreA, scoreB := 0, 0
+
+	// Якщо Віче немає, голоси не рахуються
+	if !g.VoteActive {
+		return 0, 0
+	}
+
 	midX := config.MaxX / 2
 	for _, p := range g.Players {
 		// Тіні не мають права голосу
 		if p.Status != 1 {
 			continue
 		}
+		// ІГНОРУЄМО тих, хто стояв на місці (pVoted = false)
+		if !p.Voted {
+			continue
+		}
+
 		// Хрещені дають 1 голос
 		weight := 1
 		if p.Pos.X <= midX {
@@ -238,6 +260,7 @@ func (g *Game) GetState() GameState {
 			ID: p.ID, Name: p.Name, X: p.Pos.X, Y: p.Pos.Y,
 			Status: p.Status, IsIrradiated: p.IsIrradiated,
 			HeadID: p.HeadID, BodyID: p.BodyID, Message: msg,
+			Voted: p.Voted, // ТЕПЕР ФРОНТЕНД БАЧИТЬ СТАТУС РУХУ
 		})
 	}
 	return state

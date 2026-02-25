@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,18 +22,12 @@ var (
 )
 
 // ListenChat wraps the chat scraper in a 20-minute rotation loop.
-// This prevents silent connection drops due to YouTube rate limiting and session expiry.
 func ListenChat(videoID string, commandChan chan<- engine.Command) {
 	for {
 		log.Printf("youtube: starting chat session for video %s (20m rotation)", videoID)
 
-		// Create a context that will automatically cancel after 20 minutes
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
-
-		// Run the actual scraper, passing the context
 		scrapeChatSession(ctx, videoID, commandChan)
-
-		// Ensure resources are freed
 		cancel()
 
 		log.Printf("youtube: session rotated. reconnecting in 5s...")
@@ -40,8 +35,6 @@ func ListenChat(videoID string, commandChan chan<- engine.Command) {
 	}
 }
 
-// scrapeChatSession handles the HTTP requests and message parsing for a single session.
-// It will exit gracefully when the provided context is canceled.
 func scrapeChatSession(ctx context.Context, videoID string, commandChan chan<- engine.Command) {
 	chatURL := "https://www.youtube.com/live_chat?v=" + videoID
 
@@ -96,12 +89,14 @@ func scrapeChatSession(ctx context.Context, videoID string, commandChan chan<- e
 
 	log.Println("youtube: connected successfully, waiting for messages...")
 
+	// ЗАПАМ'ЯТОВУЄМО ЧАС СТАРТУ СЕСІЇ (щоб відсіяти старі повідомлення)
+	sessionStartTime := time.Now().UnixMicro()
+
 	for {
-		// Check if 20 minutes have passed, exit if true
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(1500 * time.Millisecond): // Original 1.5s delay
+		case <-time.After(1500 * time.Millisecond):
 		}
 
 		payload := fmt.Sprintf(`{
@@ -130,9 +125,9 @@ func scrapeChatSession(ctx context.Context, videoID string, commandChan chan<- e
 		newContinuation := updateContinuation(chatData, continuationToken)
 		if newContinuation != continuationToken {
 			continuationToken = newContinuation
-			parseAndSendMessages(chatData, commandChan)
+			// Передаємо час старту сесії для фільтрації
+			parseAndSendMessages(chatData, commandChan, sessionStartTime)
 		} else {
-			// Check context again before the fallback sleep
 			select {
 			case <-ctx.Done():
 				return
@@ -142,7 +137,6 @@ func scrapeChatSession(ctx context.Context, videoID string, commandChan chan<- e
 	}
 }
 
-// findKey recursively searches for a specific key within an unknown JSON structure.
 func findKey(obj interface{}, key string) interface{} {
 	switch val := obj.(type) {
 	case map[string]interface{}:
@@ -213,7 +207,7 @@ func updateContinuation(data map[string]interface{}, fallback string) string {
 	return fallback
 }
 
-func parseAndSendMessages(data map[string]interface{}, commandChan chan<- engine.Command) {
+func parseAndSendMessages(data map[string]interface{}, commandChan chan<- engine.Command, sessionStartTime int64) {
 	actionsObj := findKey(data, "actions")
 	if actionsObj == nil {
 		return
@@ -237,6 +231,16 @@ func parseAndSendMessages(data map[string]interface{}, commandChan chan<- engine
 			}
 
 			if textMsg, ok := item["liveChatTextMessageRenderer"].(map[string]interface{}); ok {
+
+				// ФІЛЬТРАЦІЯ СТАРИХ ПОВІДОМЛЕНЬ (з історії)
+				if tsStr, ok := textMsg["timestampUsec"].(string); ok {
+					if ts, err := strconv.ParseInt(tsStr, 10, 64); err == nil {
+						if ts < sessionStartTime {
+							continue // Ігноруємо все, що було до старту скрапера
+						}
+					}
+				}
+
 				authorName := "Глядач"
 				if anObj := findKey(textMsg, "authorName"); anObj != nil {
 					if simple, ok := anObj.(map[string]interface{})["simpleText"].(string); ok {

@@ -32,6 +32,9 @@ type Player struct {
 	IrradiatedUntil time.Time
 	LastMessage     string
 	MessageTime     time.Time
+
+	// ВАЖЛИВО: Статус активності під час Віче
+	Voted bool
 }
 
 type GameState struct {
@@ -68,4 +71,7 @@ type PlayerState struct {
 	HeadID       int    `json:"headId"`
 	BodyID       int    `json:"bodyId"`
 	Message      string `json:"message"`
+
+	// ВАЖЛИВО: Передаємо статус голосування на фронтенд
+	Voted bool `json:"voted"`
 }

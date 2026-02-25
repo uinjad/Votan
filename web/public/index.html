@@ -124,12 +124,14 @@
         if (Date.now() < shakeUntil) ctx.translate(Math.random() * 12 - 6, Math.random() * 12 - 6);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+        // 1. МАЛЮЄМО ФОН
         if (voteActive && images['map_vote']?.complete) {
             ctx.drawImage(images['map_vote'], 0, 0, canvas.width, canvas.height);
         } else if (images['bg']?.complete) {
             ctx.drawImage(images['bg'], 0, 0, canvas.width, canvas.height);
         }
 
+        // 2. МАЛЮЄМО 5G ЗОНИ
         if (attackActive && attackZones) {
             ctx.fillStyle = colors.danger5G;
             attackZones.forEach(z => {
@@ -137,6 +139,21 @@
                 const zy = z.Y !== undefined ? z.Y : z.y;
                 ctx.fillRect(zx * TILE_SIZE, (MAX_Y - 1 - zy) * TILE_SIZE, TILE_SIZE, TILE_SIZE);
             });
+        }
+
+        // 3. МАЛЮЄМО ДЕКОРАЦІЇ (тепер ПІД гравцями)
+        if (images['env']?.complete) ctx.drawImage(images['env'], 0, 0, canvas.width, canvas.height);
+
+        // 4. МАЛЮЄМО БОСА (тепер ПІД гравцями)
+        if (bossActive && images['boss']?.complete) {
+            const bossW = 384; const bossH = 384;
+            const bx = (canvas.width - bossW) / 2; const by = 110; 
+            const scale = 1 + Math.sin(Date.now() / 600) * 0.015;
+            ctx.save();
+            ctx.translate(bx + bossW/2, by + bossH/2); ctx.scale(scale, scale);
+            if (Date.now() < shakeUntil) ctx.filter = 'brightness(1.8) sepia(1) saturate(20) hue-rotate(-50deg)';
+            ctx.drawImage(images['boss'], -bossW/2, -bossH/2, bossW, bossH);
+            ctx.restore();
         }
 
         players.sort((a, b) => {
@@ -150,6 +167,7 @@
 
         const activeBubbles = [];
 
+        // 5. МАЛЮЄМО ГРАВЦІВ
         players.forEach(p => {
             const px = p.X !== undefined ? p.X : p.x;
             const py = p.Y !== undefined ? p.Y : p.y;
@@ -159,6 +177,7 @@
             const pBody = p.BodyID !== undefined ? p.BodyID : p.bodyId;
             const pIrrad = p.IsIrradiated || p.isIrradiated;
             const pMsg = p.Message || p.message;
+            const pVoted = p.Voted !== undefined ? p.Voted : p.voted; // СТАТУС ГОЛОСУВАННЯ
 
             const logX = px * TILE_SIZE;
             const logY = (MAX_Y - 1 - py) * TILE_SIZE;
@@ -168,10 +187,20 @@
             ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
             ctx.beginPath(); ctx.ellipse(logX + 20, logY + 34, 16, 6, 0, 0, Math.PI * 2); ctx.fill();
 
+            // Чорно-білий фільтр, якщо йде Віче і гравець стоїть на місці
+            if (voteActive && !pVoted) {
+                ctx.filter = 'grayscale(100%) opacity(60%)';
+            } else {
+                ctx.filter = 'none';
+            }
+
             const hKey = 'head_' + padZero(pHead || 0);
             const bKey = 'body_' + padZero(pBody || 0);
             if (images[bKey]?.complete) ctx.drawImage(images[bKey], drawX, drawY, TILE_SIZE*3, TILE_SIZE*3);
             if (images[hKey]?.complete) ctx.drawImage(images[hKey], drawX, drawY, TILE_SIZE*3, TILE_SIZE*3);
+
+            // Скидаємо фільтр, щоб ім'я було кольоровим
+            ctx.filter = 'none';
 
             ctx.font = '18px "Russo One", sans-serif';
             ctx.textAlign = 'center'; 
@@ -183,19 +212,7 @@
             if (pMsg) activeBubbles.push({ text: pMsg, x: logX + 20, y: drawY - 10, isIrradiated: pIrrad });
         });
 
-        if (images['env']?.complete) ctx.drawImage(images['env'], 0, 0, canvas.width, canvas.height);
-
-        if (bossActive && images['boss']?.complete) {
-            const bossW = 384; const bossH = 384;
-            const bx = (canvas.width - bossW) / 2; const by = 110; 
-            const scale = 1 + Math.sin(Date.now() / 600) * 0.015;
-            ctx.save();
-            ctx.translate(bx + bossW/2, by + bossH/2); ctx.scale(scale, scale);
-            if (Date.now() < shakeUntil) ctx.filter = 'brightness(1.8) sepia(1) saturate(20) hue-rotate(-50deg)';
-            ctx.drawImage(images['boss'], -bossW/2, -bossH/2, bossW, bossH);
-            ctx.restore();
-        }
-
+        // 6. МАЛЮЄМО ЧАТ ТА UI
         const drawnRects = [];
         ctx.font = '20px "Russo One", sans-serif'; 
 

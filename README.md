@@ -34,7 +34,7 @@ This project was built with **Clean Architecture** and **SOLID** principles in m
 * **Integration:** OBS WebSocket API (`andreykaipov/goobs`)
 * **Frontend (Overlay & Admin):** Vanilla JavaScript, HTML5 Canvas/DOM
 
-## ⚙️ Project Structure
+## Project Structure
 
 \`\`\`text
 .
