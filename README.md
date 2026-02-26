@@ -1,81 +1,75 @@
-# Votan: Real-Time Stream Engagement Engine
-
-![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)
-![WebSocket](https://img.shields.io/badge/WebSocket-Gorilla-blue)
-![OBS Studio](https://img.shields.io/badge/Integration-OBS_WebSocket-black)
-![SQLite](https://img.shields.io/badge/Database-SQLite-003B57?style=flat&logo=sqlite)
-
+Votan: Real-Time Stream Engagement Engine
 Votan is a high-performance, real-time backend engine written in Go that transforms standard live stream chats (e.g., YouTube) into an interactive, multi-user RPG environment overlaid directly onto the video feed.
 
 The system handles real-time player movement, combat mechanics, spatial events, and dynamic OBS Studio scene manipulation without requiring viewers to install any third-party software—everything is driven by chat commands.
 
+Architecture & Core Principles
+This project was built with Clean Architecture and SOLID principles in mind to ensure scalability and testability:
 
+Concurrency & State Management: Utilizes Go's goroutines and channels to handle continuous tick-rate processing. Shared resources (like OBS animation generations) are protected via sync.Mutex to prevent race conditions and goroutine leaks.
 
-## Architecture & Core Principles
+Decoupled Logic: External integrations (Database, OBS API) are isolated from the core game loop. This allows the engine to run in a "headless" mode for testing or development without requiring a live OBS connection.
 
-This project was built with **Clean Architecture** and **SOLID** principles in mind to ensure scalability and testability:
+Dynamic Asset Discovery: The engine features an automated asset scanner that detects character skins (Head/Body) at runtime, eliminating the need for hardcoded limits and allowing for "hot" updates to the visual library.
 
-* **Concurrency & State Management:** Utilizes Go's goroutines and channels to handle continuous tick-rate processing. Shared resources (like OBS animation generations) are protected via `sync.Mutex` to prevent race conditions and goroutine leaks.
-* **Dependency Injection:** External integrations (Database, OBS API) are abstracted behind interfaces (`Storage`, `MediaController`). This decouples the game engine from specific implementations and allows for comprehensive unit testing via mocking.
-* **Event-Driven WebSocket Server:** Employs full-duplex WebSocket communication to broadcast game state to the frontend renderer and admin dashboard simultaneously with minimal latency.
+Event-Driven WebSocket Server: Employs full-duplex WebSocket communication to broadcast game state to the frontend renderer and admin dashboard simultaneously with minimal latency.
 
-## Key Features
+Key Features
+Real-Time Game Loop: A custom tick-based engine processing grid movement, collision detection, and spatial debuffs (e.g., "5G radiation zones").
 
-* **Real-Time Game Loop:** A custom tick-based engine processing grid movement, collision detection, and spatial debuffs (e.g., "5G zones").
-* **OBS Studio Automation:** Directly controls the streamer's OBS via the OBS-WebSocket API. Capable of manipulating scene items, triggering media playback, and applying complex visual filters (e.g., fade opacity) programmatically based on game state.
-* **Persistent Player Data:** SQLite integration to track player coordinates, progression status ("Baptized"), and cosmetic equipment (Skins).
-* **Demiurge Admin Dashboard:** A dedicated web-based control panel for the streamer to trigger boss events, initiate global voting, apply spatial attacks, and manage users.
+OBS Studio Automation: Directly controls OBS via the OBS-WebSocket API. Capable of manipulating scene items, triggering media playback, and applying complex visual filters (e.g., fade opacity) programmatically.
 
-## Tech Stack
+Persistent Player Data: SQLite integration to track player coordinates, progression status ("Baptized"), and cosmetic equipment (Skins).
 
-* **Backend:** Go (Golang)
-* **Networking:** `gorilla/websocket`
-* **Database:** SQLite (`mattn/go-sqlite3`)
-* **Integration:** OBS WebSocket API (`andreykaipov/goobs`)
-* **Frontend (Overlay & Admin):** Vanilla JavaScript, HTML5 Canvas/DOM
+Demiurge Admin Dashboard: A dedicated web-based control panel for the streamer to trigger boss events, initiate global voting, apply spatial attacks, and impersonate users for moderation or storytelling.
 
-## Getting Started
+Tech Stack
+Backend: Go (Golang) 1.21+
 
-### Prerequisites
-* Go 1.21 or higher
-* OBS Studio (with WebSocket Server enabled on port 4455)
+Networking: gorilla/websocket
 
-### Installation
+Database: github.com/glebarez/go-sqlite (Pure Go, CGO-free for easy cross-compilation)
 
-1.  Clone the repository:
-    \`\`\`bash
-    git clone https://github.com/yourusername/votan.git
-    cd votan
-    \`\`\`
+Integration: OBS WebSocket API (andreykaipov/goobs)
 
-2.  Set up the environment variables. Create a `.env` file in the root directory:
-    \`\`\`env
-    OBS_ADDR=localhost:4455
-    OBS_PASS=your_obs_websocket_password
-    ADMIN_SECRET=your_secure_admin_token
-    \`\`\`
+Frontend: Vanilla JavaScript, HTML5 Canvas (Overlay), DOM (Admin)
 
-3.  Run the server:
-    \`\`\`bash
-    go run cmd/server/main.go
-    \`\`\`
+Getting Started
+Prerequisites
+Go 1.21 or higher
 
-4.  **Integration Setup:**
-    * Add a new "Browser Source" in OBS pointing to `http://localhost:8080`.
-    * Open `http://localhost:8080/admin.html` in your browser to access the control panel.
+OBS Studio (with WebSocket Server enabled on port 4455)
 
-## How it Works (Client Side)
+Installation
+Clone the repository:
 
+Bash
+git clone https://github.com/yourusername/votan.git
+cd votan
+Run the server (it will prompt for configuration or use .env):
+
+Bash
+go run cmd/server/main.go
+Integration Setup:
+
+Add a new Browser Source in OBS pointing to http://localhost:8080.
+
+Open http://localhost:8080/admin.html to access the Demiurge Control Panel.
+
+How it Works (Client Side)
 Viewers interact by typing commands into the live chat:
-* Movement: `!r5` (Right 5 units), `!l2` (Left 2 units), `!u`, `!d`.
-* Combat: `!hit` damages the current boss.
-* Customization: `!h1b2` changes the player's head and body skin (requires Admin blessing).
 
-## Future Roadmap
+Movement: !r5 (Right 5), !l2 (Left 2), !u10 (Up 10), !d.
 
-* [ ] **Unit Testing:** Implementing Table-Driven Tests with mocked `MediaController` and `Storage`.
-* [ ] **Hardware Integration:** Adding Bluetooth HID support for controlling player entities via Flipper Zero directly from the Admin Panel.
-* [ ] **Cross-Platform Chat:** Expanding input parsing to support Twitch and Kick concurrently with YouTube.
+Combat: !hit damages the current boss during events.
 
----
-*Designed and developed for robust live stream engagement.*
+Customization: !h1b2 changes head and body skins (requires Admin blessing/Baptism).
+
+Future Roadmap
+[x] Unit Testing: Implemented comprehensive logic testing for movement, collisions, and voting.
+
+[ ] Hardware Integration: Adding Bluetooth HID support for controlling player entities via Flipper Zero directly from the Admin Panel.
+
+[ ] Cross-Platform Chat: Expanding input parsing to support Twitch and Kick concurrently with YouTube.
+
+Designed and developed for robust live stream engagement.
