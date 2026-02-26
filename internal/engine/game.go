@@ -69,7 +69,17 @@ func (g *Game) RestorePlayersFromDB() {
 	fmt.Printf("✅ Відновлено %d слов'ян з бази даних\n", len(g.Players))
 }
 
+// Функція-помічник для масового блокування прямокутних зон
+func (g *Game) blockArea(x1, y1, x2, y2 int) {
+	for x := x1; x <= x2; x++ {
+		for y := y1; y <= y2; y++ {
+			g.BlockedCells[Pos{X: x, Y: y}] = true
+		}
+	}
+}
+
 func (g *Game) initStaticMap() {
+	// 1. Блокуємо краї екрану
 	for x := 0; x < config.MaxX; x++ {
 		g.BlockedCells[Pos{X: x, Y: 0}] = true
 		g.BlockedCells[Pos{X: x, Y: config.MaxY - 1}] = true
@@ -78,11 +88,17 @@ func (g *Game) initStaticMap() {
 		g.BlockedCells[Pos{X: 0, Y: y}] = true
 		g.BlockedCells[Pos{X: config.MaxX - 1, Y: y}] = true
 	}
+
+	// 2. Відновлені перешкоди (Декорації)
+	g.blockArea(9, 25, 10, 30)
+	g.blockArea(16, 9, 17, 10)
+	g.blockArea(15, 6, 16, 7)
 }
 
 func (g *Game) Start() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	cleanupTicker := time.NewTicker(1 * time.Minute)
+
 	for {
 		select {
 		case <-ticker.C:
@@ -97,19 +113,11 @@ func (g *Game) cleanupInactive() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	// Встановлюємо ліміт: 10 хвилин у минулому від поточного часу
-	threshold := time.Now().Add(-10 * time.Minute)
-
+	threshold := time.Now().Add(-1 * config.PlayerTimeout)
 	for id, p := range g.Players {
-		// Якщо остання дія гравця була раніше, ніж 10 хвилин тому
 		if p.LastActive.Before(threshold) {
-			// 1. Звільняємо клітинку на карті, щоб туди могли стати інші
 			delete(g.Grid, p.Pos)
-			// 2. Видаляємо гравця з активного списку (він зникне з екрана)
 			delete(g.Players, id)
-
-			// Примітка: Ми НЕ видаляємо його з БД (g.DB.DeleteUser),
-			// тому його скіни та статус збережуться до наступного повідомлення в чат.
 		}
 	}
 }
@@ -126,27 +134,37 @@ func (g *Game) tick() {
 
 	g.processVoteEvent()
 	g.process5GEvent()
-	g.processDebuffs() // Знімаємо 5G, якщо час вийшов
+	g.processDebuffs()
 
+	// ЛОГІКА РУХУ ТА КОЛІЗІЇ
 	for _, p := range g.Players {
 		if p.RemainingSteps > 0 {
 			nextPos := Pos{X: p.Pos.X + p.TargetDx, Y: p.Pos.Y + p.TargetDy}
-			if nextPos.X < 0 || nextPos.X >= config.MaxX || nextPos.Y < 0 || nextPos.Y >= config.MaxY || g.Grid[nextPos] != nil || g.BlockedCells[nextPos] {
+
+			// Чиста перевірка: Межі, інші гравці, статичні перешкоди
+			if nextPos.X < 0 || nextPos.X >= config.MaxX || nextPos.Y < 0 || nextPos.Y >= config.MaxY ||
+				g.Grid[nextPos] != nil ||
+				g.BlockedCells[nextPos] {
+
 				p.RemainingSteps = 0
 				continue
 			}
+
+			// Робимо крок
 			delete(g.Grid, p.Pos)
 			p.Pos = nextPos
 			g.Grid[p.Pos] = p
 			p.RemainingSteps--
-			g.DB.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
+
+			if g.DB != nil {
+				g.DB.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
+			}
 		}
 	}
 }
 
 func (g *Game) processVoteEvent() {
 	if g.VoteActive && time.Now().After(g.VoteEndTime) {
-		// Рахуємо ДО того, як вимкнути VoteActive, інакше нулі
 		scoreA, scoreB := g.calculateCurrentScores()
 		g.VoteActive = false
 
@@ -169,28 +187,23 @@ func (g *Game) processVoteEvent() {
 func (g *Game) calculateCurrentScores() (int, int) {
 	scoreA, scoreB := 0, 0
 
-	// Якщо Віче немає, голоси не рахуються
 	if !g.VoteActive {
 		return 0, 0
 	}
 
 	midX := config.MaxX / 2
 	for _, p := range g.Players {
-		// Тіні не мають права голосу
 		if p.Status != 1 {
 			continue
 		}
-		// ІГНОРУЄМО тих, хто стояв на місці (pVoted = false)
 		if !p.Voted {
 			continue
 		}
 
-		// Хрещені дають 1 голос
-		weight := 1
 		if p.Pos.X <= midX {
-			scoreA += weight
+			scoreA += 1
 		} else {
-			scoreB += weight
+			scoreB += 1
 		}
 	}
 	return scoreA, scoreB
@@ -203,10 +216,12 @@ func (g *Game) process5GEvent() {
 			if g.Attack5GZones[p.Pos] {
 				p.IsIrradiated = true
 				p.IrradiatedUntil = time.Now().Add(config.Debuff5GDuration)
-				g.DB.SetIrradiated(p.ID, true)
+				if g.DB != nil {
+					g.DB.SetIrradiated(p.ID, true)
+				}
 			}
 		}
-		g.Attack5GZones = nil // Очищаємо зони
+		g.Attack5GZones = nil
 	}
 }
 
@@ -215,7 +230,9 @@ func (g *Game) processDebuffs() {
 	for _, p := range g.Players {
 		if p.IsIrradiated && now.After(p.IrradiatedUntil) {
 			p.IsIrradiated = false
-			g.DB.SetIrradiated(p.ID, false)
+			if g.DB != nil {
+				g.DB.SetIrradiated(p.ID, false)
+			}
 		}
 	}
 }
@@ -260,7 +277,7 @@ func (g *Game) GetState() GameState {
 			ID: p.ID, Name: p.Name, X: p.Pos.X, Y: p.Pos.Y,
 			Status: p.Status, IsIrradiated: p.IsIrradiated,
 			HeadID: p.HeadID, BodyID: p.BodyID, Message: msg,
-			Voted: p.Voted, // ТЕПЕР ФРОНТЕНД БАЧИТЬ СТАТУС РУХУ
+			Voted: p.Voted,
 		})
 	}
 	return state

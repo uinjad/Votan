@@ -34,23 +34,6 @@ This project was built with **Clean Architecture** and **SOLID** principles in m
 * **Integration:** OBS WebSocket API (`andreykaipov/goobs`)
 * **Frontend (Overlay & Admin):** Vanilla JavaScript, HTML5 Canvas/DOM
 
-## Project Structure
-
-\`\`\`text
-.
-├── cmd/
-│   └── server/          # Application entry point
-├── internal/
-│   ├── config/          # Environment and game parameters
-│   ├── engine/          # Core game loop, logic, and interfaces
-│   ├── obs/             # OBS WebSocket client implementation
-│   └── db/              # SQLite database implementation
-├── web/
-│   ├── public/          # Static assets (HTML, CSS, JS) for overlay and admin
-│   └── assets/          # Game sprites and media
-└── README.md
-\`\`\`
-
 ## Getting Started
 
 ### Prerequisites
@@ -88,7 +71,7 @@ Viewers interact by typing commands into the live chat:
 * Combat: `!hit` damages the current boss.
 * Customization: `!h1b2` changes the player's head and body skin (requires Admin blessing).
 
-## 🔮 Future Roadmap
+## Future Roadmap
 
 * [ ] **Unit Testing:** Implementing Table-Driven Tests with mocked `MediaController` and `Storage`.
 * [ ] **Hardware Integration:** Adding Bluetooth HID support for controlling player entities via Flipper Zero directly from the Admin Panel.

@@ -26,7 +26,7 @@
     
     const images = {};
     let loadedCount = 0;
-    const totalImages = 36; 
+    let totalImages = 0; // Рахується динамічно
     let isInitialLoaded = false; 
 
     let imagesLoaded = false;
@@ -58,25 +58,45 @@
         const img = new Image(); img.src = src;
         img.onload = () => { 
             loadedCount++;
-            if (loadedCount === totalImages) {
+            if (loadedCount >= totalImages) {
                 imagesLoaded = true;
                 checkStart(); 
             }
         };
-        img.onerror = () => { console.error("Не знайдено:", src); loadedCount++; if (loadedCount === totalImages) { imagesLoaded = true; checkStart(); } };
+        img.onerror = () => { 
+            console.error("Не знайдено:", src); 
+            loadedCount++; 
+            if (loadedCount >= totalImages) { 
+                imagesLoaded = true; 
+                checkStart(); 
+            } 
+        };
         images[name] = img;
     }
     function padZero(num) { return num.toString().padStart(2, '0'); }
 
-    preload('bg', 'assets/map.png');
-    preload('map_vote', 'assets/map_vote.png'); 
-    preload('env', 'assets/map_env_01.png'); 
-    preload('boss', 'assets/boss.png'); 
-    for(let i = 0; i <= 14; i++) preload('body_' + padZero(i), `assets/body_${padZero(i)}.png`);
-    for(let i = 0; i <= 16; i++) preload('head_' + padZero(i), `assets/head_${padZero(i)}.png`);
+    // ДИНАМІЧНЕ ЗАВАНТАЖЕННЯ АСЕТІВ
+    fetch('/api/assets')
+        .then(res => res.json())
+        .then(data => {
+            const maxHead = data.maxHead || 0;
+            const maxBody = data.maxBody || 0;
+            
+            // 4 статичні картинки + динамічна кількість тіл і голів (від 0 до max)
+            totalImages = 4 + (maxHead + 1) + (maxBody + 1);
+
+            preload('bg', 'assets/map.png');
+            preload('map_vote', 'assets/map_vote.png'); 
+            preload('env', 'assets/map_env_01.png'); 
+            preload('boss', 'assets/boss.png'); 
+            
+            for(let i = 0; i <= maxBody; i++) preload('body_' + padZero(i), `assets/body_${padZero(i)}.png`);
+            for(let i = 0; i <= maxHead; i++) preload('head_' + padZero(i), `assets/head_${padZero(i)}.png`);
+        })
+        .catch(err => console.error("Помилка завантаження конфігу асетів:", err));
 
     function initWS() {
-        const ws = new WebSocket('ws://localhost:8080/ws');
+        const ws = new WebSocket('ws://' + window.location.host + '/ws');
         ws.onmessage = (e) => { 
             try { 
                 const state = JSON.parse(e.data); 
@@ -124,14 +144,14 @@
         if (Date.now() < shakeUntil) ctx.translate(Math.random() * 12 - 6, Math.random() * 12 - 6);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 1. МАЛЮЄМО ФОН
+        // 1. ФОН
         if (voteActive && images['map_vote']?.complete) {
             ctx.drawImage(images['map_vote'], 0, 0, canvas.width, canvas.height);
         } else if (images['bg']?.complete) {
             ctx.drawImage(images['bg'], 0, 0, canvas.width, canvas.height);
         }
 
-        // 2. МАЛЮЄМО 5G ЗОНИ
+        // 2. 5G ЗОНИ
         if (attackActive && attackZones) {
             ctx.fillStyle = colors.danger5G;
             attackZones.forEach(z => {
@@ -141,10 +161,9 @@
             });
         }
 
-        // 3. МАЛЮЄМО ДЕКОРАЦІЇ (тепер ПІД гравцями)
+        // 3. ДЕКОРАЦІЇ ТА БОС (ПІД ГРАВЦЯМИ)
         if (images['env']?.complete) ctx.drawImage(images['env'], 0, 0, canvas.width, canvas.height);
 
-        // 4. МАЛЮЄМО БОСА (тепер ПІД гравцями)
         if (bossActive && images['boss']?.complete) {
             const bossW = 384; const bossH = 384;
             const bx = (canvas.width - bossW) / 2; const by = 110; 
@@ -167,7 +186,7 @@
 
         const activeBubbles = [];
 
-        // 5. МАЛЮЄМО ГРАВЦІВ
+        // 4. ГРАВЦІ
         players.forEach(p => {
             const px = p.X !== undefined ? p.X : p.x;
             const py = p.Y !== undefined ? p.Y : p.y;
@@ -177,7 +196,7 @@
             const pBody = p.BodyID !== undefined ? p.BodyID : p.bodyId;
             const pIrrad = p.IsIrradiated || p.isIrradiated;
             const pMsg = p.Message || p.message;
-            const pVoted = p.Voted !== undefined ? p.Voted : p.voted; // СТАТУС ГОЛОСУВАННЯ
+            const pVoted = p.Voted !== undefined ? p.Voted : p.voted;
 
             const logX = px * TILE_SIZE;
             const logY = (MAX_Y - 1 - py) * TILE_SIZE;
@@ -187,7 +206,7 @@
             ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
             ctx.beginPath(); ctx.ellipse(logX + 20, logY + 34, 16, 6, 0, 0, Math.PI * 2); ctx.fill();
 
-            // Чорно-білий фільтр, якщо йде Віче і гравець стоїть на місці
+            // Чорно-білий фільтр під час Віче
             if (voteActive && !pVoted) {
                 ctx.filter = 'grayscale(100%) opacity(60%)';
             } else {
@@ -199,7 +218,6 @@
             if (images[bKey]?.complete) ctx.drawImage(images[bKey], drawX, drawY, TILE_SIZE*3, TILE_SIZE*3);
             if (images[hKey]?.complete) ctx.drawImage(images[hKey], drawX, drawY, TILE_SIZE*3, TILE_SIZE*3);
 
-            // Скидаємо фільтр, щоб ім'я було кольоровим
             ctx.filter = 'none';
 
             ctx.font = '18px "Russo One", sans-serif';
@@ -212,7 +230,7 @@
             if (pMsg) activeBubbles.push({ text: pMsg, x: logX + 20, y: drawY - 10, isIrradiated: pIrrad });
         });
 
-        // 6. МАЛЮЄМО ЧАТ ТА UI
+        // 5. ЧАТ
         const drawnRects = [];
         ctx.font = '20px "Russo One", sans-serif'; 
 
@@ -249,6 +267,7 @@
             lines.forEach((l, i) => ctx.fillText(l, fx + padding, fy + padding + (i * lineHeight)));
         });
 
+        // 6. UI: БОС ТА ВІЧЕ
         if (bossActive) {
             const bw = 500; const bh = 25; const bx = (canvas.width - bw) / 2; const by = 60;
             ctx.textBaseline = 'alphabetic';

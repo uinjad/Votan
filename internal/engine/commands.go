@@ -39,15 +39,13 @@ func (g *Game) processCommand(cmd Command) {
 			return
 		}
 
-		// ПЕРЕВІРКА БАЗИ: Чи є цей гравець в історії (якщо його кікнули, або він зайшов після паузи)
 		dbUser, err := g.DB.GetUser(cmd.PlayerID)
 
 		if err == nil && dbUser != nil {
-			// Гравець знайомий — відновлюємо його гени R1A1a та зовнішній вигляд
 			player = &Player{
 				ID:           cmd.PlayerID,
 				Name:         strings.TrimPrefix(cmd.PlayerName, "@"),
-				Pos:          spawnPos, // Завжди спавнимо на вільному місці, щоб не застряг
+				Pos:          spawnPos,
 				Status:       dbUser.Status,
 				IsIrradiated: dbUser.IsIrradiated,
 				HeadID:       dbUser.HeadID,
@@ -55,7 +53,6 @@ func (g *Game) processCommand(cmd Command) {
 				LastActive:   time.Now(),
 			}
 		} else {
-			// Абсолютно новий гравець (сірий)
 			player = &Player{
 				ID:         cmd.PlayerID,
 				Name:       strings.TrimPrefix(cmd.PlayerName, "@"),
@@ -66,7 +63,6 @@ func (g *Game) processCommand(cmd Command) {
 
 		g.Players[cmd.PlayerID] = player
 		g.Grid[spawnPos] = player
-		// Одразу записуємо або оновлюємо його в базі
 		g.DB.UpsertUser(player.ID, player.Name, player.Pos.X, player.Pos.Y)
 	}
 
@@ -94,12 +90,12 @@ func (g *Game) processCommand(cmd Command) {
 			g.handleBossDamage()
 			isCommand = true
 
-			// 🧬 ЗМІНА СКІНУ (тільки для R1A1a)
+			// 🧬 ЗМІНА СКІНУ
 		} else if matches := skinRegex.FindStringSubmatch(actionLower); matches != nil {
 			g.handleSkinChange(player, matches)
 			isCommand = true
 
-			// 🏃 РУХ (!r5, !l2 і т.д.)
+			// 🏃 РУХ
 		} else if strings.HasPrefix(actionLower, "!") {
 			dx, dy, steps := parseAction(actionLower)
 			if steps > 0 {
@@ -107,7 +103,6 @@ func (g *Game) processCommand(cmd Command) {
 				player.TargetDy = dy
 				player.RemainingSteps = steps
 
-				// ВАЖЛИВО: Зараховуємо гравця як активного під час Віче
 				if g.VoteActive {
 					player.Voted = true
 				}
@@ -116,7 +111,7 @@ func (g *Game) processCommand(cmd Command) {
 			}
 		}
 
-		// Звичайне повідомлення в чат
+		// Звичайне повідомлення
 		if !isCommand && !strings.HasPrefix(actionStr, "!") {
 			player.LastMessage = actionStr
 			player.MessageTime = time.Now()
@@ -166,7 +161,6 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 		parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(actionStr, "!віче")), "|")
 		g.VoteActive = true
 
-		// ВАЖЛИВО: Коли Віче починається, всі стають неактивними "сірими" (поки не зроблять крок)
 		for _, p := range g.Players {
 			p.Voted = false
 		}
@@ -185,6 +179,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 		} else {
 			g.VoteOptionB = "ПРОТИ"
 		}
+
 		g.VoteEndTime = time.Now().Add(config.VoteDuration)
 		fmt.Println("⚖️ Люцифер запустив ВІЧЕ:", g.VoteTopic)
 
@@ -217,6 +212,31 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 			g.OBS.SetOpacity(OBSWebcamSource, "Fade", 1.0)
 		}
 
+	case strings.HasPrefix(actionLower, "!rename"):
+		parts := strings.SplitN(strings.TrimSpace(strings.TrimPrefix(actionStr, "!rename")), "|", 2)
+		if len(parts) == 2 {
+			id := strings.TrimSpace(parts[0])
+			newName := strings.TrimSpace(parts[1])
+			if p, ok := g.Players[id]; ok {
+				p.Name = newName
+				if g.DB != nil {
+					g.DB.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
+				}
+				fmt.Printf("✏️ Гравця %s перейменовано на %s\n", id, newName)
+			}
+		}
+
+	case strings.HasPrefix(actionLower, "!kick_unbaptized"):
+		countMem := 0
+		for id, p := range g.Players {
+			if p.Status != 1 {
+				delete(g.Grid, p.Pos)
+				delete(g.Players, id)
+				countMem++
+			}
+		}
+		fmt.Printf("🥾 Масовий кік: видалено %d нехрещених з карти\n", countMem)
+
 	case strings.HasPrefix(actionLower, "!kick"):
 		id := strings.TrimSpace(strings.TrimPrefix(actionStr, "!kick"))
 		if p, ok := g.Players[id]; ok {
@@ -234,6 +254,28 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 			p.LastMessage = "в мене гени R1A1a"
 			p.MessageTime = time.Now()
 		}
+
+	case strings.HasPrefix(actionLower, "!purge_unbaptized"):
+		countMem, countDB := 0, 0
+		for id, p := range g.Players {
+			if p.Status != 1 {
+				delete(g.Grid, p.Pos)
+				delete(g.Players, id)
+				countMem++
+			}
+		}
+		if g.DB != nil {
+			users, err := g.DB.LoadAllUsers()
+			if err == nil {
+				for _, u := range users {
+					if u.Status != 1 {
+						g.DB.DeleteUser(u.ID)
+						countDB++
+					}
+				}
+			}
+		}
+		fmt.Printf("💀 Масова чистка: видалено %d з карти, %d з БД\n", countMem, countDB)
 
 	case strings.HasPrefix(actionLower, "!purge"):
 		id := strings.TrimSpace(strings.TrimPrefix(actionStr, "!purge"))
