@@ -27,6 +27,18 @@ func NewClient(addr, password string) (*Client, error) {
 	return &Client{conn: c}, nil
 }
 
+func (c *Client) RestartMedia(inputName string) {
+	action := "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
+	req := &mediainputs.TriggerMediaInputActionParams{
+		InputName:   &inputName,
+		MediaAction: &action,
+	}
+	_, err := c.conn.MediaInputs.TriggerMediaInputAction(req)
+	if err != nil {
+		log.Printf("OBS: Не вдалося перезапустити медіа %s: %v", inputName, err)
+	}
+}
+
 // nextFadeGen збільшує лічильник анімацій і повертає його
 func (c *Client) nextFadeGen() int {
 	c.mu.Lock()
@@ -119,17 +131,5 @@ func (c *Client) SetOpacity(sourceName, filterName string, opacity float64) {
 	_, err := c.conn.Filters.SetSourceFilterSettings(req)
 	if err != nil {
 		log.Printf("OBS SetOpacity Error: %v", err)
-	}
-}
-
-func (c *Client) RestartMedia(inputName string) {
-	action := "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
-	req := &mediainputs.TriggerMediaInputActionParams{
-		InputName:   &inputName,
-		MediaAction: &action,
-	}
-	_, err := c.conn.MediaInputs.TriggerMediaInputAction(req)
-	if err != nil {
-		log.Printf("OBS: Не вдалося перезапустити медіа %s: %v", inputName, err)
 	}
 }

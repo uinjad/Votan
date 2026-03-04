@@ -26,6 +26,7 @@ type Game struct {
 	VoteEndTime   time.Time
 	VoteResult    string
 	VoteResultEnd time.Time
+	VoteSoundPlayed bool
 
 	Attack5GActive  bool
 	Attack5GZones   map[Pos]bool
@@ -164,21 +165,34 @@ func (g *Game) tick() {
 }
 
 func (g *Game) processVoteEvent() {
-	if g.VoteActive && time.Now().After(g.VoteEndTime) {
-		scoreA, scoreB := g.calculateCurrentScores()
-		g.VoteActive = false
+	if g.VoteActive {
+		timeLeft := time.Until(g.VoteEndTime)
 
-		var winner string
-		if scoreA > scoreB {
-			winner = g.VoteOptionA
-		} else if scoreB > scoreA {
-			winner = g.VoteOptionB
-		} else {
-			winner = "НІЧИЯ"
+		if timeLeft <= 5*time.Second && !g.VoteSoundPlayed {
+			g.VoteSoundPlayed = true
+			if g.OBS != nil {
+				g.OBS.RestartMedia("viche")
+			}
 		}
-		g.VoteResult = fmt.Sprintf("РІШЕННЯ: %s (Рахунок %d:%d)", winner, scoreA, scoreB)
-		g.VoteResultEnd = time.Now().Add(config.VoteResultTTL)
+
+		if time.Now().After(g.VoteEndTime) {
+			scoreA, scoreB := g.calculateCurrentScores()
+			g.VoteActive = false
+			g.VoteSoundPlayed = false
+			
+			var winner string
+			if scoreA > scoreB {
+				winner = g.VoteOptionA
+			} else if scoreB > scoreA {
+				winner = g.VoteOptionB
+			} else {
+				winner = "НІЧИЯ"
+			}
+			g.VoteResult = fmt.Sprintf("РІШЕННЯ: %s (Рахунок %d:%d)", winner, scoreA, scoreB)
+			g.VoteResultEnd = time.Now().Add(config.VoteResultTTL)
+		}
 	}
+
 	if g.VoteResult != "" && time.Now().After(g.VoteResultEnd) {
 		g.VoteResult = ""
 	}

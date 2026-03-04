@@ -14,13 +14,13 @@ const (
 	MaxX             = 20
 	MaxY             = 35
 	MaxStepsPerTurn  = 35
-	BossMaxHP        = 50
+	BossMaxHP        = 100
 	BossHitDamage    = 10
 	VoteDuration     = 60 * time.Second
 	VoteResultTTL    = 10 * time.Second
 	Attack5GDuration = 30 * time.Second
 	Debuff5GDuration = 1 * time.Minute
-	PlayerTimeout    = 10 * time.Minute
+	PlayerTimeout    = 20 * time.Minute
 	ChatBubbleTTL    = 10 * time.Second
 )
 

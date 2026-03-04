@@ -119,7 +119,6 @@ func main() {
 	}
 
 	game := engine.NewGame(db, obsClient)
-	game.RestorePlayersFromDB()
 	go game.Start()
 
 	if config.YouTubeVideoID != "" {

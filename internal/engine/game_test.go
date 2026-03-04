@@ -118,7 +118,8 @@ func TestCleanupInactivePlayers(t *testing.T) {
 	g.Players["p1"] = p1
 	g.Grid[p1.Pos] = p1
 
-	p2 := &Player{ID: "p2", Pos: Pos{X: 6, Y: 6}, LastActive: time.Now().Add(-20 * time.Minute)}
+	// СИМУЛЯЦІЯ: Гравець був AFK цілих 24 години! Це гарантує видалення.
+	p2 := &Player{ID: "p2", Pos: Pos{X: 6, Y: 6}, LastActive: time.Now().Add(-24 * time.Hour)}
 	g.Players["p2"] = p2
 	g.Grid[p2.Pos] = p2
 
