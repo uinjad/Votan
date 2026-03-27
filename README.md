@@ -1,6 +1,8 @@
 Votan: Real-Time Stream Engagement Engine
 Votan is a high-performance, real-time backend engine written in Go that transforms standard live stream chats (e.g., YouTube) into an interactive, multi-user RPG environment overlaid directly onto the video feed.
 
+![example in real stream](example1.png)
+
 The system handles real-time player movement, combat mechanics, spatial events, and dynamic OBS Studio scene manipulation without requiring viewers to install any third-party software—everything is driven by chat commands.
 
 Architecture & Core Principles
@@ -13,6 +15,8 @@ Decoupled Logic: External integrations (Database, OBS API) are isolated from the
 Dynamic Asset Discovery: The engine features an automated asset scanner that detects character skins (Head/Body) at runtime, eliminating the need for hardcoded limits and allowing for "hot" updates to the visual library.
 
 Event-Driven WebSocket Server: Employs full-duplex WebSocket communication to broadcast game state to the frontend renderer and admin dashboard simultaneously with minimal latency.
+
+![example admin panel](exampleAdminPanel.png)
 
 Key Features
 Real-Time Game Loop: A custom tick-based engine processing grid movement, collision detection, and spatial debuffs (e.g., "5G radiation zones").
