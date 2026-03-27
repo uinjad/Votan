@@ -19,13 +19,13 @@ type Game struct {
 	DB           *storage.DB
 	OBS          *obs.Client
 
-	VoteActive    bool
-	VoteTopic     string
-	VoteOptionA   string
-	VoteOptionB   string
-	VoteEndTime   time.Time
-	VoteResult    string
-	VoteResultEnd time.Time
+	VoteActive      bool
+	VoteTopic       string
+	VoteOptionA     string
+	VoteOptionB     string
+	VoteEndTime     time.Time
+	VoteResult      string
+	VoteResultEnd   time.Time
 	VoteSoundPlayed bool
 
 	Attack5GActive  bool
@@ -52,7 +52,7 @@ func NewGame(db *storage.DB, obsClient *obs.Client) *Game {
 func (g *Game) RestorePlayersFromDB() {
 	users, err := g.DB.LoadAllUsers()
 	if err != nil {
-		fmt.Println("❌ Помилка відновлення бази гравців:", err)
+		fmt.Println("Помилка відновлення бази гравців:", err)
 		return
 	}
 	for _, u := range users {
@@ -67,7 +67,7 @@ func (g *Game) RestorePlayersFromDB() {
 			g.Grid[pos] = player
 		}
 	}
-	fmt.Printf("✅ Відновлено %d слов'ян з бази даних\n", len(g.Players))
+	fmt.Printf("Відновлено %d слов'ян з бази даних\n", len(g.Players))
 }
 
 // Функція-помічник для масового блокування прямокутних зон
@@ -179,7 +179,7 @@ func (g *Game) processVoteEvent() {
 			scoreA, scoreB := g.calculateCurrentScores()
 			g.VoteActive = false
 			g.VoteSoundPlayed = false
-			
+
 			var winner string
 			if scoreA > scoreB {
 				winner = g.VoteOptionA

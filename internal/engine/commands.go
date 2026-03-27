@@ -25,7 +25,7 @@ func (g *Game) processCommand(cmd Command) {
 	actionStr := strings.TrimSpace(cmd.Action)
 	actionLower := strings.ToLower(actionStr)
 
-	// 👑 АДМІНКА (Люцифер)
+	// АДМІНКА (Люцифер)
 	if cmd.PlayerID == config.AdminSecret {
 		g.handleAdminCommand(actionStr, actionLower)
 		return
@@ -68,7 +68,7 @@ func (g *Game) processCommand(cmd Command) {
 
 	player.LastActive = time.Now()
 
-	// ☢️ ДЕБАФ ОПРОМІНЕННЯ 5G
+	// ДЕБАФ ОПРОМІНЕННЯ 5G
 	if player.IsIrradiated && actionStr != "" {
 		phrases := []string{
 			"Хочу ревакцинуватись!",
@@ -95,7 +95,7 @@ func (g *Game) processCommand(cmd Command) {
 			g.handleSkinChange(player, matches)
 			isCommand = true
 
-			// 🏃 РУХ
+			// РУХ
 		} else if strings.HasPrefix(actionLower, "!") {
 			dx, dy, steps := parseAction(actionLower)
 			if steps > 0 {
@@ -181,7 +181,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 		}
 
 		g.VoteEndTime = time.Now().Add(config.VoteDuration)
-		fmt.Println("⚖️ Люцифер запустив ВІЧЕ:", g.VoteTopic)
+		fmt.Println("Люцифер запустив ВІЧЕ:", g.VoteTopic)
 
 	case actionLower == "!stop_vote":
 		if g.VoteActive {
@@ -222,7 +222,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 				if g.DB != nil {
 					g.DB.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
 				}
-				fmt.Printf("✏️ Гравця %s перейменовано на %s\n", id, newName)
+				fmt.Printf("Гравця %s перейменовано на %s\n", id, newName)
 			}
 		}
 
@@ -235,7 +235,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 				countMem++
 			}
 		}
-		fmt.Printf("🥾 Масовий кік: видалено %d нехрещених з карти\n", countMem)
+		fmt.Printf("Масовий кік: видалено %d нехрещених з карти\n", countMem)
 
 	case strings.HasPrefix(actionLower, "!kick"):
 		id := strings.TrimSpace(strings.TrimPrefix(actionStr, "!kick"))
@@ -275,7 +275,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 				}
 			}
 		}
-		fmt.Printf("💀 Масова чистка: видалено %d з карти, %d з БД\n", countMem, countDB)
+		fmt.Printf("Масова чистка: видалено %d з карти, %d з БД\n", countMem, countDB)
 
 	case strings.HasPrefix(actionLower, "!purge"):
 		id := strings.TrimSpace(strings.TrimPrefix(actionStr, "!purge"))
@@ -284,7 +284,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 			delete(g.Players, id)
 		}
 		g.DB.DeleteUser(id)
-		fmt.Printf("💀 Гравець %s стертий з історії\n", id)
+		fmt.Printf("Гравець %s стертий з історії\n", id)
 	}
 }
 

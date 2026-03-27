@@ -16,15 +16,15 @@ all: test build
 
 ## build: Компіляція проєкту
 build:
-	@echo "🔨 Збірка $(BINARY_NAME)..."
+	@echo "Збірка $(BINARY_NAME)..."
 	@go build $(LDFLAGS) -o $(BINARY_NAME) $(MAIN_PATH)
-	@echo "✅ Готово!"
+	@echo "Готово!"
 
 ## test: Запуск усіх Unit-тестів
 test:
-	@echo "🧪 Запуск тестів..."
+	@echo "Запуск тестів..."
 	@go test ./internal/engine/...
-	@echo "✅ Тести пройдено!"
+	@echo "Тести пройдено!"
 
 ## run: Запуск без збірки
 run:
@@ -32,37 +32,37 @@ run:
 
 ## clean: Видалення бінарних файлів та тимчасових папок
 clean:
-	@echo "🧹 Очищення..."
+	@echo "Очищення..."
 	@if exist $(BINARY_NAME) del /q $(BINARY_NAME)
 	@if exist $(RELEASE_DIR) rd /s /q $(RELEASE_DIR)
 	@if exist $(ZIP_NAME) del /q $(ZIP_NAME)
 	@go clean
-	@echo "✨ Очищено!"
+	@echo "Очищено!"
 
 ## release: Збірка проєкту та пакування в ZIP-архів для релізу
 release: clean test
-	@echo "📦 Підготовка релізу..."
+	@echo "Підготовка релізу..."
 	@mkdir $(RELEASE_DIR)
 	@mkdir $(RELEASE_DIR)\web
 	@mkdir $(RELEASE_DIR)\web\public
 	
-	@echo "🚀 Компіляція бойової версії..."
+	@echo "Компіляція бойової версії..."
 	@go build $(LDFLAGS) -o $(RELEASE_DIR)\$(BINARY_NAME) $(MAIN_PATH)
 	
-	@echo "📂 Копіювання асетів та фронтенду..."
+	@echo "Копіювання асетів та фронтенду..."
 	@xcopy /E /I /Y web\public $(RELEASE_DIR)\web\public > nul
 	
-	@echo "📝 Створення шаблону .env..."
+	@echo "Створення шаблону .env..."
 	@echo OBS_ADDR=localhost:4455 > $(RELEASE_DIR)\.env
 	@echo OBS_PASS=your_password >> $(RELEASE_DIR)\.env
 	@echo ADMIN_SECRET=your_secret_token >> $(RELEASE_DIR)\.env
 	@echo YOUTUBE_VIDEO_ID= >> $(RELEASE_DIR)\.env
 	
-	@echo "🗜️ Пакування в $(ZIP_NAME)..."
+	@echo "Пакування в $(ZIP_NAME)..."
 	@powershell Compress-Archive -Path $(RELEASE_DIR) -DestinationPath $(ZIP_NAME) -Force
 	
 	@echo "--------------------------------------------------"
-	@echo "✅ РЕЛІЗ ГОТОВИЙ: $(ZIP_NAME)"
+	@echo "РЕЛІЗ ГОТОВИЙ: $(ZIP_NAME)"
 	@echo "--------------------------------------------------"
 
 ## help: Показати доступні команди

@@ -83,9 +83,9 @@ func main() {
 
 	if len(os.Args) > 1 {
 		configFile = os.Args[1]
-		fmt.Printf("📂 Знайдено файл конфігурації: %s\n", configFile)
+		fmt.Printf("Знайдено файл конфігурації: %s\n", configFile)
 	} else {
-		fmt.Print("📝 Вкажіть шлях до файлу конфігурації (або натисніть Enter для '.env'): ")
+		fmt.Print("Вкажіть шлях до файлу конфігурації (або натисніть Enter для '.env'): ")
 		reader := bufio.NewReader(os.Stdin)
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
@@ -94,7 +94,7 @@ func main() {
 		}
 	}
 
-	fmt.Printf("🚀 Запуск сервера з конфігом: %s...\n", configFile)
+	fmt.Printf("Запуск сервера з конфігом: %s...\n", configFile)
 
 	// === 2. ІНІЦІАЛІЗАЦІЯ ===
 	config.Load(configFile)
@@ -114,7 +114,7 @@ func main() {
 		if err != nil {
 			log.Printf("server: OBS connection failed: %v", err)
 		} else {
-			log.Println("✅ OBS успішно підключено")
+			log.Println("OBS успішно підключено")
 		}
 	}
 
@@ -123,9 +123,9 @@ func main() {
 
 	if config.YouTubeVideoID != "" {
 		go youtube.ListenChat(config.YouTubeVideoID, game.CommandChan)
-		log.Printf("✅ Слухаємо чат YouTube (ID: %s)\n", config.YouTubeVideoID)
+		log.Printf("Слухаємо чат YouTube (ID: %s)\n", config.YouTubeVideoID)
 	} else {
-		log.Println("⚠️ YOUTUBE_VIDEO_ID не встановлено. Чат не читається.")
+		log.Println("YOUTUBE_VIDEO_ID не встановлено. Чат не читається.")
 	}
 
 	// === 3. МЕРЕЖА ТА БРАУЗЕР ===
@@ -155,7 +155,7 @@ func main() {
 
 	time.Sleep(1 * time.Second)
 
-	fmt.Println("🌐 Відкриваю Панель Деміурга...")
+	fmt.Println("Відкриваю Панель Деміурга...")
 	openBrowser("http://localhost:8080/admin.html")
 
 	select {}

@@ -31,12 +31,12 @@ func StartServer(game *engine.Game) {
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			fmt.Println("❌ Помилка WebSocket:", err)
+			fmt.Println("Помилка WebSocket:", err)
 			return
 		}
 		defer conn.Close()
 
-		fmt.Println("🟢 Клієнт підключився (OBS або Мок)!")
+		fmt.Println("Клієнт підключився (OBS або Мок)!")
 
 		// Додаємо клієнта в загальний список
 		clients[conn] = true
@@ -48,7 +48,7 @@ func StartServer(game *engine.Game) {
 			err := conn.ReadJSON(&cmd)
 			if err != nil {
 				// Якщо браузер закрили
-				fmt.Println("🔴 Клієнт відключився")
+				fmt.Println("Клієнт відключився")
 				break
 			}
 
@@ -81,9 +81,9 @@ func StartServer(game *engine.Game) {
 		}
 	}()
 
-	fmt.Println("📡 Веб-сервер та WebSocket запущено на http://localhost:8080")
+	fmt.Println("Веб-сервер та WebSocket запущено на http://localhost:8080")
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
-		fmt.Println("❌ Помилка запуску сервера:", err)
+		fmt.Println("Помилка запуску сервера:", err)
 	}
 }

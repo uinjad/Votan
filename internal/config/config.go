@@ -103,5 +103,5 @@ func ScanAssets(assetsDir string) {
 
 	MaxHeadID = maxH
 	MaxBodyID = maxB
-	log.Printf("👕 Знайдено асетів: Голів до %d, Тіл до %d\n", MaxHeadID, MaxBodyID)
+	log.Printf("Знайдено асетів: Голів до %d, Тіл до %d\n", MaxHeadID, MaxBodyID)
 }
