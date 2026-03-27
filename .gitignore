@@ -2,3 +2,5 @@ votan_game.db
 votan_game.db-shm
 votan_game.db-wal
 .env
+votan.db
+Votan.exe
