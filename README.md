@@ -48,7 +48,7 @@ Installation
 Clone the repository:
 
 Bash
-git clone https://github.com/yourusername/votan.git
+git clone https://github.com/ArthurDovis/Votan.git
 cd votan
 Run the server (it will prompt for configuration or use .env):
 
@@ -58,7 +58,7 @@ Integration Setup:
 
 Add a new Browser Source in OBS pointing to http://localhost:8080.
 
-Open http://localhost:8080/admin.html to access the Demiurge Control Panel.
+Open http://localhost:8080/admin.html to access the Demiurge Control Panel of press button for open it.
 
 How it Works (Client Side)
 Viewers interact by typing commands into the live chat:
@@ -76,4 +76,4 @@ Future Roadmap
 
 [ ] Cross-Platform Chat: Expanding input parsing to support Twitch and Kick concurrently with YouTube.
 
-Designed and developed for robust live stream engagement.
+Designed and developed for live stream engagement.
