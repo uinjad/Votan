@@ -34,6 +34,7 @@ This project was built with Clean Architecture and SOLID principles in mind to e
 ### Prerequisites
 * Go 1.21 or higher
 * OBS Studio (with WebSocket Server enabled on port 4455)
+* Make (for Windows, usually provided via MinGW or similar)
 
 ### Installation
 Clone the repository:
@@ -41,9 +42,17 @@ Clone the repository:
     git clone https://github.com/ArthurDovis/Votan.git
     cd votan
 
-Run the server (it will prompt for configuration or use .env):
+Run the server directly for development (it will prompt for configuration or use .env):
 
-    go run cmd/server/main.go
+    make run
+
+To build the executable file (Votan.exe):
+
+    make build
+
+To create a full release archive (.zip) with all assets and configs:
+
+    make release
 
 ### Integration Setup
 1. Add a new **Browser Source** in OBS pointing to http://localhost:8080.
