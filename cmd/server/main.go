@@ -19,7 +19,7 @@ import (
 	"Votan/internal/youtube"
 )
 
-// Структура для передачі налаштувань у фронтенд
+// ConfigData is the settings payload exchanged with the frontend.
 type ConfigData struct {
 	YoutubeID string `json:"youtube_id"`
 	ObsAddr   string `json:"obs_addr"`
@@ -74,18 +74,18 @@ func configHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	// === 1. ІНТЕРФЕЙС ЗАПУСКУ ===
+	// === 1. STARTUP PROMPT ===
 	fmt.Println("===================================================")
-	fmt.Println("       VOTAN - ІНТЕРАКТИВНА ГРА ДЛЯ СТРІМУ")
+	fmt.Println("       VOTAN - INTERACTIVE STREAM GAME")
 	fmt.Println("===================================================")
 
 	configFile := ".env"
 
 	if len(os.Args) > 1 {
 		configFile = os.Args[1]
-		fmt.Printf("Знайдено файл конфігурації: %s\n", configFile)
+		fmt.Printf("Using config file: %s\n", configFile)
 	} else {
-		fmt.Print("Вкажіть шлях до файлу конфігурації (або натисніть Enter для '.env'): ")
+		fmt.Print("Enter a config file path (or press Enter for '.env'): ")
 		reader := bufio.NewReader(os.Stdin)
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
@@ -94,12 +94,12 @@ func main() {
 		}
 	}
 
-	fmt.Printf("Запуск сервера з конфігом: %s...\n", configFile)
+	fmt.Printf("Starting server with config: %s...\n", configFile)
 
-	// === 2. ІНІЦІАЛІЗАЦІЯ ===
+	// === 2. INITIALIZATION ===
 	config.Load(configFile)
 
-	// Динамічне сканування одягу
+	// Scan skin assets at runtime.
 	config.ScanAssets("./web/public/assets")
 
 	db, err := storage.InitDB("votan.db")
@@ -114,7 +114,7 @@ func main() {
 		if err != nil {
 			log.Printf("server: OBS connection failed: %v", err)
 		} else {
-			log.Println("OBS успішно підключено")
+			log.Println("OBS connected")
 		}
 	}
 
@@ -123,18 +123,18 @@ func main() {
 
 	if config.YouTubeVideoID != "" {
 		go youtube.ListenChat(config.YouTubeVideoID, game.CommandChan)
-		log.Printf("Слухаємо чат YouTube (ID: %s)\n", config.YouTubeVideoID)
+		log.Printf("Listening to YouTube chat (id: %s)\n", config.YouTubeVideoID)
 	} else {
-		log.Println("YOUTUBE_VIDEO_ID не встановлено. Чат не читається.")
+		log.Println("YOUTUBE_VIDEO_ID is not set; chat will not be read.")
 	}
 
-	// === 3. МЕРЕЖА ТА БРАУЗЕР ===
+	// === 3. HTTP + BROWSER ===
 	fs := http.FileServer(http.Dir("./web/public"))
 	http.Handle("/", fs)
 
 	http.HandleFunc("/api/config", configHandler)
 
-	// Новий роут для передачі кількості картинок на фронтенд
+	// Reports asset counts to the frontend.
 	http.HandleFunc("/api/assets", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]int{
 			"maxHead": config.MaxHeadID,
@@ -155,7 +155,7 @@ func main() {
 
 	time.Sleep(1 * time.Second)
 
-	fmt.Println("Відкриваю Панель Деміурга...")
+	fmt.Println("Opening the Demiurge panel...")
 	openBrowser("http://localhost:8080/admin.html")
 
 	select {}

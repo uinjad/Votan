@@ -14,7 +14,7 @@ import (
 type Client struct {
 	conn *goobs.Client
 
-	// Додаємо захист від "гонитви анімацій"
+	// Guards against overlapping fade animations racing each other.
 	mu      sync.Mutex
 	fadeGen int
 }
@@ -35,11 +35,11 @@ func (c *Client) RestartMedia(inputName string) {
 	}
 	_, err := c.conn.MediaInputs.TriggerMediaInputAction(req)
 	if err != nil {
-		log.Printf("OBS: Не вдалося перезапустити медіа %s: %v", inputName, err)
+		log.Printf("OBS: failed to restart media %s: %v", inputName, err)
 	}
 }
 
-// nextFadeGen збільшує лічильник анімацій і повертає його
+// nextFadeGen bumps the animation counter and returns its new value.
 func (c *Client) nextFadeGen() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -55,7 +55,7 @@ func (c *Client) SetSourceEnabled(sceneName, sourceName string, enabled bool) {
 
 	resp, err := c.conn.SceneItems.GetSceneItemId(idReq)
 	if err != nil {
-		log.Printf("OBS: Не знайдено джерело %s у сцені %s: %v", sourceName, sceneName, err)
+		log.Printf("OBS: source %s not found in scene %s: %v", sourceName, sceneName, err)
 		return
 	}
 
@@ -67,13 +67,13 @@ func (c *Client) SetSourceEnabled(sceneName, sourceName string, enabled bool) {
 
 	_, err = c.conn.SceneItems.SetSceneItemEnabled(enableReq)
 	if err != nil {
-		log.Printf("OBS: Не вдалося змінити статус джерела %s: %v", sourceName, err)
+		log.Printf("OBS: failed to toggle source %s: %v", sourceName, err)
 	}
 }
 
-// FadeSourceOpacity тепер перевіряє, чи не скасували її
+// FadeSourceOpacity bails out early if a newer fade or SetOpacity superseded it.
 func (c *Client) FadeSourceOpacity(sourceName, filterName string, startOpacity, endOpacity float64, duration time.Duration) {
-	// Фіксуємо "покоління" цієї конкретної анімації
+	// Pin this animation's generation.
 	currentGen := c.nextFadeGen()
 
 	steps := 20
@@ -84,11 +84,11 @@ func (c *Client) FadeSourceOpacity(sourceName, filterName string, startOpacity, 
 	bTrue := true
 
 	for i := 0; i <= steps; i++ {
-		// Перевіряємо, чи не запустив хтось іншу анімацію або SetOpacity
+		// If someone started another fade or called SetOpacity, stop.
 		c.mu.Lock()
 		if c.fadeGen != currentGen {
 			c.mu.Unlock()
-			// Якщо покоління змінилося — тихо вбиваємо цю горутину
+			// Generation changed: quietly kill this goroutine.
 			return
 		}
 		c.mu.Unlock()
@@ -104,7 +104,7 @@ func (c *Client) FadeSourceOpacity(sourceName, filterName string, startOpacity, 
 
 		_, err := c.conn.Filters.SetSourceFilterSettings(req)
 		if err != nil {
-			log.Printf("OBS Fade Error: %v", err)
+			log.Printf("OBS fade error: %v", err)
 			return
 		}
 
@@ -113,9 +113,9 @@ func (c *Client) FadeSourceOpacity(sourceName, filterName string, startOpacity, 
 	}
 }
 
-// SetOpacity миттєво встановлює прозорість і ВБИВАЄ всі старі плавні анімації
+// SetOpacity sets opacity instantly and cancels any in-flight fades.
 func (c *Client) SetOpacity(sourceName, filterName string, opacity float64) {
-	// Збільшуємо лічильник, щоб усі старі FadeSourceOpacity одразу зупинилися
+	// Bump the counter so any running FadeSourceOpacity stops immediately.
 	c.nextFadeGen()
 
 	bTrue := true
@@ -130,6 +130,6 @@ func (c *Client) SetOpacity(sourceName, filterName string, opacity float64) {
 
 	_, err := c.conn.Filters.SetSourceFilterSettings(req)
 	if err != nil {
-		log.Printf("OBS SetOpacity Error: %v", err)
+		log.Printf("OBS SetOpacity error: %v", err)
 	}
 }

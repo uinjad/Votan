@@ -10,11 +10,11 @@ import (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Дозволяємо підключення з будь-якого джерела (для локального UI)
+		return true // accept any origin (local UI only)
 	},
 }
 
-// HandleWebSocket керує підключеннями клієнтів (як гри, так і адмінки)
+// HandleWebSocket serves both the game overlay and the admin dashboard.
 func HandleWebSocket(g *Game, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -23,26 +23,25 @@ func HandleWebSocket(g *Game, w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// 1. Горутина для читання команд (з адмінки або фліппера)
+	// 1. Reader goroutine for incoming commands (from the admin panel or Flipper).
 	go func() {
 		for {
 			var cmd Command
 			if err := conn.ReadJSON(&cmd); err != nil {
-				return // Клієнт відключився
+				return // client disconnected
 			}
 			g.CommandChan <- cmd
 		}
 	}()
 
-	// 2. Цикл відправки стану гри на фронтенд (кожні 100мс)
+	// 2. Push game state to the client every 100 ms.
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
-	// Використовуємо for range замість select (виправлено попередження S1000)
 	for range ticker.C {
 		state := g.GetState()
 		if err := conn.WriteJSON(state); err != nil {
-			return // Якщо браузер закрили - виходимо
+			return // browser closed
 		}
 	}
 }

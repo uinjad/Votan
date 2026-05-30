@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Ігрові константи
+// Game constants.
 const (
 	MaxX             = 20
 	MaxY             = 35
@@ -24,7 +24,7 @@ const (
 	ChatBubbleTTL    = 10 * time.Second
 )
 
-// Змінні конфігурації (тепер ліміти одягу тут, бо вони динамічні)
+// Runtime config. Skin limits live here because they're discovered dynamically.
 var (
 	OBSAddr        string
 	OBSPass        string
@@ -40,7 +40,7 @@ func Load(path string) {
 	ActivePath = path
 	data, err := os.ReadFile(path)
 	if err != nil {
-		log.Printf("config: файл %s не знайдено\n", path)
+		log.Printf("config: file %s not found\n", path)
 		return
 	}
 
@@ -69,11 +69,12 @@ func Load(path string) {
 	}
 }
 
-// ДОДАНО: Динамічний сканер асетів
+// ScanAssets discovers the highest head_N / body_N skin ids in the assets dir,
+// so the available range isn't hardcoded and can be updated by dropping files in.
 func ScanAssets(assetsDir string) {
 	files, err := os.ReadDir(assetsDir)
 	if err != nil {
-		log.Printf("config: Не вдалося прочитати папку з асетами: %v\n", err)
+		log.Printf("config: could not read assets dir: %v\n", err)
 		return
 	}
 
@@ -103,5 +104,5 @@ func ScanAssets(assetsDir string) {
 
 	MaxHeadID = maxH
 	MaxBodyID = maxB
-	log.Printf("Знайдено асетів: Голів до %d, Тіл до %d\n", MaxHeadID, MaxBodyID)
+	log.Printf("Assets found: heads up to %d, bodies up to %d\n", MaxHeadID, MaxBodyID)
 }

@@ -89,7 +89,7 @@ func scrapeChatSession(ctx context.Context, videoID string, commandChan chan<- e
 
 	log.Println("youtube: connected successfully, waiting for messages...")
 
-	// ЗАПАМ'ЯТОВУЄМО ЧАС СТАРТУ СЕСІЇ (щоб відсіяти старі повідомлення)
+	// Remember session start time so we can skip old (history) messages.
 	sessionStartTime := time.Now().UnixMicro()
 
 	for {
@@ -125,7 +125,7 @@ func scrapeChatSession(ctx context.Context, videoID string, commandChan chan<- e
 		newContinuation := updateContinuation(chatData, continuationToken)
 		if newContinuation != continuationToken {
 			continuationToken = newContinuation
-			// Передаємо час старту сесії для фільтрації
+			// Pass the session start time so old messages get filtered out.
 			parseAndSendMessages(chatData, commandChan, sessionStartTime)
 		} else {
 			select {
@@ -232,11 +232,11 @@ func parseAndSendMessages(data map[string]interface{}, commandChan chan<- engine
 
 			if textMsg, ok := item["liveChatTextMessageRenderer"].(map[string]interface{}); ok {
 
-				// ФІЛЬТРАЦІЯ СТАРИХ ПОВІДОМЛЕНЬ (з історії)
+				// Skip messages from before the session started (chat history).
 				if tsStr, ok := textMsg["timestampUsec"].(string); ok {
 					if ts, err := strconv.ParseInt(tsStr, 10, 64); err == nil {
 						if ts < sessionStartTime {
-							continue // Ігноруємо все, що було до старту скрапера
+							continue // ignore anything before the scraper started
 						}
 					}
 				}

@@ -7,12 +7,12 @@ import (
 	"Votan/internal/config"
 )
 
-// Допоміжна функція для створення чистої гри
+// setupTestGame returns a clean, headless game (no DB, no OBS).
 func setupTestGame() *Game {
 	return NewGame(nil, nil)
 }
 
-// ТЕСТ 1: Перевірка руху та колізій
+// TEST 1: movement and collisions.
 func TestMovementAndCollisions(t *testing.T) {
 	g := setupTestGame()
 
@@ -23,17 +23,17 @@ func TestMovementAndCollisions(t *testing.T) {
 	g.Players["p1"] = p1
 	g.Grid[p1.Pos] = p1
 
-	// Сценарій 1.1: Успішний рух
+	// 1.1: successful move.
 	p1.TargetDx = 1
 	p1.TargetDy = 0
 	p1.RemainingSteps = 1
 	g.tick()
 
 	if p1.Pos.X != 11 || p1.Pos.Y != 10 {
-		t.Errorf("Гравець не зрушив на очікувану клітинку. Поточна позиція: %v", p1.Pos)
+		t.Errorf("player did not move to the expected cell. current pos: %v", p1.Pos)
 	}
 
-	// Сценарій 1.2: Зіткнення з межею карти (стіною)
+	// 1.2: collision with the map edge (wall).
 	p1.Pos = Pos{X: config.MaxX - 1, Y: 10}
 	g.Grid[p1.Pos] = p1
 	p1.TargetDx = 1
@@ -42,13 +42,13 @@ func TestMovementAndCollisions(t *testing.T) {
 	g.tick()
 
 	if p1.Pos.X >= config.MaxX {
-		t.Errorf("Гравець вийшов за межі карти! Позиція: %v", p1.Pos)
+		t.Errorf("player went out of bounds. pos: %v", p1.Pos)
 	}
 	if p1.RemainingSteps != 0 {
-		t.Errorf("Кроки не обнулилися після удару об стіну")
+		t.Errorf("steps were not reset after hitting a wall")
 	}
 
-	// Сценарій 1.3: Зіткнення з іншим гравцем
+	// 1.3: collision with another player.
 	p2 := &Player{ID: "p2", Pos: Pos{X: 10, Y: 10}}
 	g.Players["p2"] = p2
 	g.Grid[p2.Pos] = p2
@@ -61,10 +61,10 @@ func TestMovementAndCollisions(t *testing.T) {
 	g.tick()
 
 	if p1.Pos.X == 10 {
-		t.Errorf("Гравець p1 наступив на гравця p2!")
+		t.Errorf("player p1 stepped onto player p2")
 	}
 
-	// Сценарій 1.4: Зіткнення зі статичною перешкодою
+	// 1.4: collision with a static obstacle.
 	obstaclePos := Pos{X: 15, Y: 15}
 	g.BlockedCells[obstaclePos] = true
 	p1.Pos = Pos{X: 14, Y: 15}
@@ -75,42 +75,42 @@ func TestMovementAndCollisions(t *testing.T) {
 	g.tick()
 
 	if p1.Pos == obstaclePos {
-		t.Errorf("Гравець пройшов крізь дерево/камінь!")
+		t.Errorf("player walked through a static obstacle")
 	}
 }
 
-// ТЕСТ 2: Перевірка логіки Віче
+// TEST 2: voting logic.
 func TestVotingSystem(t *testing.T) {
 	g := setupTestGame()
 	g.VoteActive = true
 
-	// Сірий (нехрещений)
+	// Unbaptized (gray): should not count.
 	p1 := &Player{ID: "p1", Status: 0, Voted: true, Pos: Pos{X: 5, Y: 10}}
 	g.Players["p1"] = p1
 
-	// Хрещений, не рухався
+	// Baptized, did not move: should not count.
 	p2 := &Player{ID: "p2", Status: 1, Voted: false, Pos: Pos{X: 5, Y: 11}}
 	g.Players["p2"] = p2
 
-	// Хрещений, рухався ЗА
+	// Baptized, moved to the "for" side.
 	p3 := &Player{ID: "p3", Status: 1, Voted: true, Pos: Pos{X: 5, Y: 12}}
 	g.Players["p3"] = p3
 
-	// Хрещений, рухався ПРОТИ
+	// Baptized, moved to the "against" side.
 	p4 := &Player{ID: "p4", Status: 1, Voted: true, Pos: Pos{X: 15, Y: 12}}
 	g.Players["p4"] = p4
 
 	scoreA, scoreB := g.calculateCurrentScores()
 
 	if scoreA != 1 {
-		t.Errorf("Очікувався 1 голос ЗА, отримано: %d", scoreA)
+		t.Errorf("expected 1 vote for side A, got: %d", scoreA)
 	}
 	if scoreB != 1 {
-		t.Errorf("Очікувався 1 голос ПРОТИ, отримано: %d", scoreB)
+		t.Errorf("expected 1 vote for side B, got: %d", scoreB)
 	}
 }
 
-// ТЕСТ 3: Очищення AFK гравців
+// TEST 3: AFK player cleanup.
 func TestCleanupInactivePlayers(t *testing.T) {
 	g := setupTestGame()
 
@@ -118,7 +118,7 @@ func TestCleanupInactivePlayers(t *testing.T) {
 	g.Players["p1"] = p1
 	g.Grid[p1.Pos] = p1
 
-	// СИМУЛЯЦІЯ: Гравець був AFK цілих 24 години! Це гарантує видалення.
+	// p2 has been AFK for 24h, which guarantees removal.
 	p2 := &Player{ID: "p2", Pos: Pos{X: 6, Y: 6}, LastActive: time.Now().Add(-24 * time.Hour)}
 	g.Players["p2"] = p2
 	g.Grid[p2.Pos] = p2
@@ -126,14 +126,14 @@ func TestCleanupInactivePlayers(t *testing.T) {
 	g.cleanupInactive()
 
 	if _, exists := g.Players["p1"]; !exists {
-		t.Errorf("Активного гравця було помилково видалено!")
+		t.Errorf("an active player was removed by mistake")
 	}
 	if _, exists := g.Players["p2"]; exists {
-		t.Errorf("AFK гравця НЕ було видалено!")
+		t.Errorf("the AFK player was not removed")
 	}
 }
 
-// ТЕСТ 4: Спадіння радіації
+// TEST 4: radiation debuff expiry.
 func TestDebuffs(t *testing.T) {
 	g := setupTestGame()
 
@@ -147,6 +147,6 @@ func TestDebuffs(t *testing.T) {
 	g.processDebuffs()
 
 	if p1.IsIrradiated {
-		t.Errorf("Дебаф радіації не спав після закінчення терміну дії!")
+		t.Errorf("the radiation debuff did not expire after its duration")
 	}
 }

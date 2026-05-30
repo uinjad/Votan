@@ -52,7 +52,7 @@ func NewGame(db *storage.DB, obsClient *obs.Client) *Game {
 func (g *Game) RestorePlayersFromDB() {
 	users, err := g.DB.LoadAllUsers()
 	if err != nil {
-		fmt.Println("Помилка відновлення бази гравців:", err)
+		fmt.Println("Failed to restore players from DB:", err)
 		return
 	}
 	for _, u := range users {
@@ -67,10 +67,10 @@ func (g *Game) RestorePlayersFromDB() {
 			g.Grid[pos] = player
 		}
 	}
-	fmt.Printf("Відновлено %d слов'ян з бази даних\n", len(g.Players))
+	fmt.Printf("Restored %d players from the database\n", len(g.Players))
 }
 
-// Функція-помічник для масового блокування прямокутних зон
+// blockArea marks a rectangular region as impassable.
 func (g *Game) blockArea(x1, y1, x2, y2 int) {
 	for x := x1; x <= x2; x++ {
 		for y := y1; y <= y2; y++ {
@@ -80,7 +80,7 @@ func (g *Game) blockArea(x1, y1, x2, y2 int) {
 }
 
 func (g *Game) initStaticMap() {
-	// 1. Блокуємо краї екрану
+	// 1. Block the screen edges.
 	for x := 0; x < config.MaxX; x++ {
 		g.BlockedCells[Pos{X: x, Y: 0}] = true
 		g.BlockedCells[Pos{X: x, Y: config.MaxY - 1}] = true
@@ -90,7 +90,7 @@ func (g *Game) initStaticMap() {
 		g.BlockedCells[Pos{X: config.MaxX - 1, Y: y}] = true
 	}
 
-	// 2. Відновлені перешкоди (Декорації)
+	// 2. Static obstacles (decor).
 	g.blockArea(9, 25, 10, 30)
 	g.blockArea(16, 9, 17, 10)
 	g.blockArea(15, 6, 16, 7)
@@ -137,12 +137,12 @@ func (g *Game) tick() {
 	g.process5GEvent()
 	g.processDebuffs()
 
-	// ЛОГІКА РУХУ ТА КОЛІЗІЇ
+	// Movement and collision.
 	for _, p := range g.Players {
 		if p.RemainingSteps > 0 {
 			nextPos := Pos{X: p.Pos.X + p.TargetDx, Y: p.Pos.Y + p.TargetDy}
 
-			// Чиста перевірка: Межі, інші гравці, статичні перешкоди
+			// Check bounds, other players and static obstacles.
 			if nextPos.X < 0 || nextPos.X >= config.MaxX || nextPos.Y < 0 || nextPos.Y >= config.MaxY ||
 				g.Grid[nextPos] != nil ||
 				g.BlockedCells[nextPos] {
@@ -151,7 +151,7 @@ func (g *Game) tick() {
 				continue
 			}
 
-			// Робимо крок
+			// Take the step.
 			delete(g.Grid, p.Pos)
 			p.Pos = nextPos
 			g.Grid[p.Pos] = p

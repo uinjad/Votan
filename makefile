@@ -1,74 +1,84 @@
-# Назва проєкту
-PROJECT_NAME=Votan
-BINARY_NAME=$(PROJECT_NAME).exe
-RELEASE_DIR=$(PROJECT_NAME)_Release
-ZIP_NAME=$(PROJECT_NAME)_v1.0.zip
+# Project
+PROJECT_NAME = Votan
+MAIN_PATH    = cmd/server/main.go
+RELEASE_DIR  = $(PROJECT_NAME)_Release
+ZIP_NAME     = $(PROJECT_NAME)_v1.0.zip
 
-# Шлях до головного файлу
-MAIN_PATH=cmd/server/main.go
+# Strip symbol/debug info to shrink the binary.
+LDFLAGS = -ldflags="-s -w"
 
-# Прапорці збірки для мінімізації розміру
-LDFLAGS=-ldflags="-s -w"
+# Binary name per OS (.exe on Windows).
+ifeq ($(OS),Windows_NT)
+	BINARY_NAME = $(PROJECT_NAME).exe
+else
+	BINARY_NAME = $(PROJECT_NAME)
+endif
 
-.PHONY: all build test clean run release help
+.PHONY: all build test run clean release help
 
 all: test build
 
-## build: Компіляція проєкту
+## build: compile the binary
 build:
-	@echo "Збірка $(BINARY_NAME)..."
+	@echo "Building $(BINARY_NAME)..."
 	@go build $(LDFLAGS) -o $(BINARY_NAME) $(MAIN_PATH)
-	@echo "Готово!"
+	@echo "Done."
 
-## test: Запуск усіх Unit-тестів
+## test: run the unit tests
 test:
-	@echo "Запуск тестів..."
+	@echo "Running tests..."
 	@go test ./internal/engine/...
-	@echo "Тести пройдено!"
+	@echo "Tests passed."
 
-## run: Запуск без збірки
+## run: run without building
 run:
 	@go run $(MAIN_PATH)
 
-## clean: Видалення бінарних файлів та тимчасових папок
+## clean: remove build artifacts and temp files
 clean:
-	@echo "Очищення..."
+ifeq ($(OS),Windows_NT)
 	@if exist $(BINARY_NAME) del /q $(BINARY_NAME)
 	@if exist $(RELEASE_DIR) rd /s /q $(RELEASE_DIR)
 	@if exist $(ZIP_NAME) del /q $(ZIP_NAME)
+else
+	@rm -f $(BINARY_NAME)
+	@rm -rf $(RELEASE_DIR)
+	@rm -f $(ZIP_NAME)
+endif
 	@go clean
-	@echo "Очищено!"
+	@echo "Cleaned."
 
-## release: Збірка проєкту та пакування в ZIP-архів для релізу
+## release: build and package a distributable zip (binary + assets + sample .env)
+## note: on Unix this needs `zip` installed (preinstalled on macOS).
 release: clean test
-	@echo "Підготовка релізу..."
+	@echo "Building release..."
+ifeq ($(OS),Windows_NT)
 	@mkdir $(RELEASE_DIR)
 	@mkdir $(RELEASE_DIR)\web
 	@mkdir $(RELEASE_DIR)\web\public
-	
-	@echo "Компіляція бойової версії..."
 	@go build $(LDFLAGS) -o $(RELEASE_DIR)\$(BINARY_NAME) $(MAIN_PATH)
-	
-	@echo "Копіювання асетів та фронтенду..."
 	@xcopy /E /I /Y web\public $(RELEASE_DIR)\web\public > nul
-	
-	@echo "Створення шаблону .env..."
 	@echo OBS_ADDR=localhost:4455 > $(RELEASE_DIR)\.env
 	@echo OBS_PASS=your_password >> $(RELEASE_DIR)\.env
 	@echo ADMIN_SECRET=your_secret_token >> $(RELEASE_DIR)\.env
 	@echo YOUTUBE_VIDEO_ID= >> $(RELEASE_DIR)\.env
-	
-	@echo "Пакування в $(ZIP_NAME)..."
 	@powershell Compress-Archive -Path $(RELEASE_DIR) -DestinationPath $(ZIP_NAME) -Force
-	
+else
+	@mkdir -p $(RELEASE_DIR)/web
+	@go build $(LDFLAGS) -o $(RELEASE_DIR)/$(BINARY_NAME) $(MAIN_PATH)
+	@cp -r web/public $(RELEASE_DIR)/web/
+	@printf 'OBS_ADDR=localhost:4455\nOBS_PASS=your_password\nADMIN_SECRET=your_secret_token\nYOUTUBE_VIDEO_ID=\n' > $(RELEASE_DIR)/.env
+	@zip -r $(ZIP_NAME) $(RELEASE_DIR) > /dev/null
+endif
 	@echo "--------------------------------------------------"
-	@echo "РЕЛІЗ ГОТОВИЙ: $(ZIP_NAME)"
+	@echo "Release ready: $(ZIP_NAME)"
 	@echo "--------------------------------------------------"
 
-## help: Показати доступні команди
+## help: list available commands
 help:
-	@echo "Доступні команди:"
-	@echo "  make build   - Зібрати Votan.exe"
-	@echo "  make test    - Запустити тести"
-	@echo "  make release - Створити готовий до відправки ZIP-архів"
-	@echo "  make clean   - Видалити всі тимчасові файли"
+	@echo "Available commands:"
+	@echo "  make build   - build the binary"
+	@echo "  make test    - run the tests"
+	@echo "  make run     - run without building"
+	@echo "  make release - build a distributable zip"
+	@echo "  make clean   - remove temporary files"

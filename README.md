@@ -1,73 +1,102 @@
-# Votan: Real-Time Stream Engagement Engine
+# Votan
 
-**Votan** is a high-performance, real-time backend engine written in Go that transforms standard live stream chats (e.g., YouTube) into an interactive, multi-user RPG environment overlaid directly onto the video feed.
+[![CI](https://github.com/uinjad/Votan/actions/workflows/ci.yml/badge.svg)](https://github.com/uinjad/Votan/actions/workflows/ci.yml)
 
-![example in real stream](exampleStream.png)
+Votan turns a live YouTube chat into a multiplayer RPG that runs as an overlay
+on top of the stream. Viewers play by typing chat commands — nothing to
+install, no extensions, no logins. It also drives OBS directly, so boss fights,
+votes and visual effects fire on stream in real time.
 
-The system handles real-time player movement, combat mechanics, spatial events, and dynamic OBS Studio scene manipulation without requiring viewers to install any third-party software—everything is driven by chat commands.
+The theme is a satirical, chat-driven game built around internet conspiracy
+memes (5G, lizard people, and friends). The setting is a joke; the engine
+isn't.
 
-## Architecture & Core Principles
-This project was built with Clean Architecture and SOLID principles in mind to ensure scalability and testability:
+![overlay on a live stream](exampleStream.png)
 
-* **Concurrency & State Management:** Utilizes Go's goroutines and channels to handle continuous tick-rate processing. Shared resources (like OBS animation generations) are protected via sync.Mutex to prevent race conditions and goroutine leaks.
-* **Decoupled Logic:** External integrations (Database, OBS API) are isolated from the core game loop. This allows the engine to run in a "headless" mode for testing or development without requiring a live OBS connection.
-* **Dynamic Asset Discovery:** The engine features an automated asset scanner that detects character skins (Head/Body) at runtime, eliminating the need for hardcoded limits and allowing for "hot" updates to the visual library.
-* **Event-Driven WebSocket Server:** Employs full-duplex WebSocket communication to broadcast game state to the frontend renderer and admin dashboard simultaneously with minimal latency.
+## How it works
 
-![example admin panel](exampleAdminPanel.png)
+One Go process runs three things at once:
 
-## Key Features
-* **Real-Time Game Loop:** A custom tick-based engine processing grid movement, collision detection, and spatial debuffs (e.g., "5G radiation zones").
-* **OBS Studio Automation:** Directly controls OBS via the OBS-WebSocket API. Capable of manipulating scene items, triggering media playback, and applying complex visual filters (e.g., fade opacity) programmatically.
-* **Persistent Player Data:** SQLite integration to track player coordinates, progression status ("Baptized"), and cosmetic equipment (Skins).
-* **Demiurge Admin Dashboard:** A dedicated web-based control panel for the streamer to trigger boss events, initiate global voting, apply spatial attacks, and impersonate users for moderation or storytelling.
+- a fixed 100 ms tick loop that owns all game state — movement, collisions,
+  voting, timed events;
+- a chat reader that pulls the YouTube live chat feed and pushes commands into
+  a buffered channel;
+- a WebSocket server that streams game state to the overlay and the admin
+  dashboard ten times a second.
 
-## Tech Stack
-* **Backend:** Go (Golang) 1.21+
-* **Networking:** gorilla/websocket
-* **Database:** github.com/glebarez/go-sqlite (Pure Go, CGO-free for easy cross-compilation)
-* **Integration:** OBS WebSocket API (andreykaipov/goobs)
-* **Frontend:** Vanilla JavaScript, HTML5 Canvas (Overlay), DOM (Admin)
+State sits behind a single `sync.RWMutex` and is only mutated from the tick
+loop. The chat reader and the WebSocket clients never touch it directly — they
+talk to the loop over channels. Each tick drains a length snapshot of the
+command channel, which gives natural backpressure when a stream gets loud.
 
-## Getting Started
+The domain model and the wire model are kept apart: `Player` is the in-memory
+entity, `PlayerState` is the JSON the frontend gets. External integrations
+(SQLite, OBS) live behind their own packages and are allowed to be nil — the
+engine runs headless with no database and no OBS, which is exactly how the
+tests drive it.
 
-### Prerequisites
-* Go 1.21 or higher
-* OBS Studio (with WebSocket Server enabled on port 4455)
-* Make (for Windows, usually provided via MinGW or similar)
+One detail I like: OBS fades run in their own goroutines, and a global
+generation counter lets any new effect cancel a stale fade still in flight, so
+two overlapping admin actions can't leave the scene stuck half-faded.
 
-### Installation
-Clone the repository:
+![admin dashboard](exampleAdminPanel.png)
 
-    git clone https://github.com/ArthurDovis/Votan.git
-    cd votan
+## Stack
 
-Run the server directly for development (it will prompt for configuration or use .env):
+- Go 1.25
+- `gorilla/websocket` for the realtime layer
+- `glebarez/go-sqlite` — pure-Go, CGO-free SQLite, so it cross-compiles cleanly
+- `andreykaipov/goobs` for the OBS WebSocket API
+- vanilla JS + HTML5 canvas for the overlay and the dashboard
 
-    make run
+## Running it
 
-To build the executable file (Votan.exe):
+Needs Go 1.25+ and, optionally, OBS Studio with its WebSocket server enabled.
 
-    make build
+```
+git clone https://github.com/uinjad/Votan.git
+cd Votan
+make run
+```
 
-To create a full release archive (.zip) with all assets and configs:
+Add a Browser Source in OBS pointing at `http://localhost:8080`, and open
+`http://localhost:8080/admin.html` for the control panel. Config (stream id,
+OBS address/password, admin token) lives in `.env` and can be edited from the
+panel.
 
-    make release
+```
+make test      # run the engine tests
+make build     # build the binary
+make release   # build and package a zip with assets
+```
 
-### Integration Setup
-1. Add a new **Browser Source** in OBS pointing to http://localhost:8080.
-2. Open http://localhost:8080/admin.html to access the Demiurge Control Panel or press the button to open it.
+## Chat commands
 
-## How it Works (Client Side)
-Viewers interact by typing commands into the live chat:
-* **Movement:** !r5 (Right 5), !l2 (Left 2), !u10 (Up 10), !d.
-* **Combat:** !hit damages the current boss during events.
-* **Customization:** !h1b2 changes head and body skins (requires Admin blessing/Baptism).
+Viewers move and act by typing in chat:
 
-## Future Roadmap
-- [x] **Unit Testing:** Implemented comprehensive logic testing for movement, collisions, and voting.
-- [ ] **Hardware Integration:** Adding Bluetooth HID support for controlling player entities via Flipper Zero directly from the Admin Panel.
-- [ ] **Cross-Platform Chat:** Expanding input parsing to support Twitch and Kick concurrently with YouTube.
+- `!r5` `!l2` `!u10` `!d` — move right / left / up / down N tiles
+- `!hit` — damage the active boss during a boss event
+- `!h1b2` — change head / body skin (needs an admin "baptism" first)
 
----
-*Designed and developed for live stream engagement.*
+## Tests
+
+The engine logic is covered by unit tests — movement and collision rules, the
+vote tally, AFK cleanup, and timed debuffs — all running against a headless
+game with no DB and no OBS attached:
+
+```
+go test ./internal/engine/...
+```
+
+## Known limitations
+
+This is built to run locally for a single streamer, and the security model
+reflects that: the admin channel is gated by a shared token and the WebSocket
+accepts any origin. That's fine on one machine, but it's not something you'd
+put on the open internet without adding real auth and proper origin checks.
+
+## Roadmap
+
+- [x] Unit tests for movement, collisions and voting
+- [ ] Flipper Zero / Bluetooth HID control of entities from the dashboard
+- [ ] Twitch and Kick chat alongside YouTube

@@ -13,7 +13,7 @@ import (
 
 var skinRegex = regexp.MustCompile(`(?i)^!h(\d+)b(\d+)$`)
 
-// Константи для OBS
+// OBS source / scene names.
 const (
 	OBSSceneName      = "Main"
 	OBSWebcamSource   = "camera"
@@ -25,13 +25,13 @@ func (g *Game) processCommand(cmd Command) {
 	actionStr := strings.TrimSpace(cmd.Action)
 	actionLower := strings.ToLower(actionStr)
 
-	// АДМІНКА (Люцифер)
+	// Admin (Demiurge) channel.
 	if cmd.PlayerID == config.AdminSecret {
 		g.handleAdminCommand(actionStr, actionLower)
 		return
 	}
 
-	// ОБРОБКА ГРАВЦІВ
+	// Regular players.
 	player, exists := g.Players[cmd.PlayerID]
 	if !exists {
 		spawnPos, ok := g.findFreeSpawn()
@@ -68,7 +68,7 @@ func (g *Game) processCommand(cmd Command) {
 
 	player.LastActive = time.Now()
 
-	// ДЕБАФ ОПРОМІНЕННЯ 5G
+	// 5G radiation debuff: irradiated players can't move and babble instead.
 	if player.IsIrradiated && actionStr != "" {
 		phrases := []string{
 			"Хочу ревакцинуватись!",
@@ -85,17 +85,17 @@ func (g *Game) processCommand(cmd Command) {
 	if actionStr != "" {
 		isCommand := false
 
-		// ⚔️ УДАР ПО БОСУ
+		// Hit the boss.
 		if actionLower == "!hit" && g.BossActive {
 			g.handleBossDamage()
 			isCommand = true
 
-			// 🧬 ЗМІНА СКІНУ
+			// Change skin.
 		} else if matches := skinRegex.FindStringSubmatch(actionLower); matches != nil {
 			g.handleSkinChange(player, matches)
 			isCommand = true
 
-			// РУХ
+			// Movement.
 		} else if strings.HasPrefix(actionLower, "!") {
 			dx, dy, steps := parseAction(actionLower)
 			if steps > 0 {
@@ -111,7 +111,7 @@ func (g *Game) processCommand(cmd Command) {
 			}
 		}
 
-		// Звичайне повідомлення
+		// Plain chat message.
 		if !isCommand && !strings.HasPrefix(actionStr, "!") {
 			player.LastMessage = actionStr
 			player.MessageTime = time.Now()
@@ -127,7 +127,7 @@ func (g *Game) handleBossDamage() {
 		if g.OBS != nil {
 			go g.triggerVictoryMedia()
 		}
-		fmt.Println("⚔️ Ящера повалено силами русичів!")
+		fmt.Println("Boss defeated by the chat.")
 	}
 }
 
@@ -181,7 +181,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 		}
 
 		g.VoteEndTime = time.Now().Add(config.VoteDuration)
-		fmt.Println("Люцифер запустив ВІЧЕ:", g.VoteTopic)
+		fmt.Println("Vote started:", g.VoteTopic)
 
 	case actionLower == "!stop_vote":
 		if g.VoteActive {
@@ -222,7 +222,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 				if g.DB != nil {
 					g.DB.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
 				}
-				fmt.Printf("Гравця %s перейменовано на %s\n", id, newName)
+				fmt.Printf("Renamed player %s to %s\n", id, newName)
 			}
 		}
 
@@ -235,7 +235,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 				countMem++
 			}
 		}
-		fmt.Printf("Масовий кік: видалено %d нехрещених з карти\n", countMem)
+		fmt.Printf("Mass kick: removed %d unbaptized from the map\n", countMem)
 
 	case strings.HasPrefix(actionLower, "!kick"):
 		id := strings.TrimSpace(strings.TrimPrefix(actionStr, "!kick"))
@@ -275,7 +275,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 				}
 			}
 		}
-		fmt.Printf("Масова чистка: видалено %d з карти, %d з БД\n", countMem, countDB)
+		fmt.Printf("Mass purge: removed %d from the map, %d from the DB\n", countMem, countDB)
 
 	case strings.HasPrefix(actionLower, "!purge"):
 		id := strings.TrimSpace(strings.TrimPrefix(actionStr, "!purge"))
@@ -284,7 +284,7 @@ func (g *Game) handleAdminCommand(actionStr, actionLower string) {
 			delete(g.Players, id)
 		}
 		g.DB.DeleteUser(id)
-		fmt.Printf("Гравець %s стертий з історії\n", id)
+		fmt.Printf("Player %s wiped\n", id)
 	}
 }
 

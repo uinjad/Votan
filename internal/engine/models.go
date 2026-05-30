@@ -33,14 +33,14 @@ type Player struct {
 	LastMessage     string
 	MessageTime     time.Time
 
-	// ВАЖЛИВО: Статус активності під час Віче
+	// Whether the player has acted (moved) during the current vote.
 	Voted bool
 }
 
 type GameState struct {
 	Players []PlayerState `json:"players"`
 
-	// Віче
+	// Vote.
 	VoteActive   bool   `json:"voteActive"`
 	VoteTopic    string `json:"voteTopic"`
 	VoteOptionA  string `json:"voteOptionA"`
@@ -50,19 +50,19 @@ type GameState struct {
 	VoteScoreB   int    `json:"voteScoreB"`
 	VoteResult   string `json:"voteResult"`
 
-	// 5G Атака
+	// 5G attack.
 	Attack5GActive   bool  `json:"attack5gActive"`
 	Attack5GTimeLeft int   `json:"attack5gTimeLeft"`
 	Attack5GZones    []Pos `json:"attack5gZones"`
 
-	// Битва з Ящером
+	// Boss fight.
 	BossActive bool `json:"bossActive"`
 	BossHP     int  `json:"bossHP"`
 	BossMaxHP  int  `json:"bossMaxHP"`
 }
 
 type PlayerState struct {
-	ID           string `json:"id"` // Додано для ідентифікації в адмінці
+	ID           string `json:"id"` // exposed so the admin panel can target players
 	Name         string `json:"name"`
 	X            int    `json:"x"`
 	Y            int    `json:"y"`
@@ -72,6 +72,6 @@ type PlayerState struct {
 	BodyID       int    `json:"bodyId"`
 	Message      string `json:"message"`
 
-	// ВАЖЛИВО: Передаємо статус голосування на фронтенд
+	// Vote status, forwarded to the frontend.
 	Voted bool `json:"voted"`
 }

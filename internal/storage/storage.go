@@ -21,7 +21,7 @@ type DB struct {
 }
 
 func InitDB(path string) (*DB, error) {
-	// Використовуємо "sqlite" замість "sqlite3" для нового драйвера
+	// Use "sqlite" (not "sqlite3") for the pure-Go driver.
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,6 @@ func (db *DB) SetIrradiated(id string, state bool) {
 	db.sql.Exec("UPDATE users SET is_irradiated = ? WHERE id = ?", state, id)
 }
 
-// ДОДАНО: видалення користувача
 func (db *DB) DeleteUser(id string) error {
 	_, err := db.sql.Exec("DELETE FROM users WHERE id = ?", id)
 	return err
