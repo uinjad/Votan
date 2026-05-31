@@ -1,7 +1,8 @@
 package obs
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -9,12 +10,17 @@ import (
 	"github.com/andreykaipov/goobs/api/requests/filters"
 	"github.com/andreykaipov/goobs/api/requests/mediainputs"
 	"github.com/andreykaipov/goobs/api/requests/sceneitems"
+
+	"Votan/internal/engine"
 )
 
+// Compile-time guarantee that Client satisfies the engine's presentation port.
+var _ engine.Scene = (*Client)(nil)
+
+// Client is an engine.Scene backed by a live OBS WebSocket connection.
 type Client struct {
 	conn *goobs.Client
 
-	// Guards against overlapping fade animations racing each other.
 	mu      sync.Mutex
 	fadeGen int
 }
@@ -22,24 +28,35 @@ type Client struct {
 func NewClient(addr, password string) (*Client, error) {
 	c, err := goobs.New(addr, goobs.WithPassword(password))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("obs: connect %q: %w", addr, err)
 	}
 	return &Client{conn: c}, nil
 }
 
+// Close disconnects from OBS. Safe to call on a nil-conn client.
+func (c *Client) Close() error {
+	if c.conn == nil {
+		return nil
+	}
+	if err := c.conn.Disconnect(); err != nil {
+		return fmt.Errorf("obs: disconnect: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) RestartMedia(inputName string) {
 	action := "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"
-	req := &mediainputs.TriggerMediaInputActionParams{
+	_, err := c.conn.MediaInputs.TriggerMediaInputAction(&mediainputs.TriggerMediaInputActionParams{
 		InputName:   &inputName,
 		MediaAction: &action,
-	}
-	_, err := c.conn.MediaInputs.TriggerMediaInputAction(req)
+	})
 	if err != nil {
-		log.Printf("OBS: failed to restart media %s: %v", inputName, err)
+		slog.Error("obs: restart media failed", "input", inputName, "err", err)
 	}
 }
 
-// nextFadeGen bumps the animation counter and returns its new value.
+// nextFadeGen bumps the fade generation so an in-flight fade can detect that it
+// has been superseded and bail out.
 func (c *Client) nextFadeGen() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -48,88 +65,65 @@ func (c *Client) nextFadeGen() int {
 }
 
 func (c *Client) SetSourceEnabled(sceneName, sourceName string, enabled bool) {
-	idReq := &sceneitems.GetSceneItemIdParams{
+	resp, err := c.conn.SceneItems.GetSceneItemId(&sceneitems.GetSceneItemIdParams{
 		SceneName:  &sceneName,
 		SourceName: &sourceName,
-	}
-
-	resp, err := c.conn.SceneItems.GetSceneItemId(idReq)
+	})
 	if err != nil {
-		log.Printf("OBS: source %s not found in scene %s: %v", sourceName, sceneName, err)
+		slog.Error("obs: source lookup failed", "scene", sceneName, "source", sourceName, "err", err)
 		return
 	}
-
-	enableReq := &sceneitems.SetSceneItemEnabledParams{
+	_, err = c.conn.SceneItems.SetSceneItemEnabled(&sceneitems.SetSceneItemEnabledParams{
 		SceneItemEnabled: &enabled,
 		SceneItemId:      &resp.SceneItemId,
 		SceneName:        &sceneName,
-	}
-
-	_, err = c.conn.SceneItems.SetSceneItemEnabled(enableReq)
+	})
 	if err != nil {
-		log.Printf("OBS: failed to toggle source %s: %v", sourceName, err)
+		slog.Error("obs: toggle source failed", "source", sourceName, "err", err)
 	}
 }
 
-// FadeSourceOpacity bails out early if a newer fade or SetOpacity superseded it.
-func (c *Client) FadeSourceOpacity(sourceName, filterName string, startOpacity, endOpacity float64, duration time.Duration) {
-	// Pin this animation's generation.
-	currentGen := c.nextFadeGen()
+func (c *Client) FadeSourceOpacity(sourceName, filterName string, from, to float64, duration time.Duration) {
+	gen := c.nextFadeGen()
 
-	steps := 20
-	sleepTime := duration / time.Duration(steps)
-	stepSize := (endOpacity - startOpacity) / float64(steps)
-	current := startOpacity
-
-	bTrue := true
+	const steps = 20
+	sleep := duration / steps
+	delta := (to - from) / steps
+	current := from
+	overlay := true
 
 	for i := 0; i <= steps; i++ {
-		// If someone started another fade or called SetOpacity, stop.
 		c.mu.Lock()
-		if c.fadeGen != currentGen {
-			c.mu.Unlock()
-			// Generation changed: quietly kill this goroutine.
-			return
-		}
+		superseded := c.fadeGen != gen
 		c.mu.Unlock()
-
-		req := &filters.SetSourceFilterSettingsParams{
-			SourceName: &sourceName,
-			FilterName: &filterName,
-			FilterSettings: map[string]interface{}{
-				"opacity": current,
-			},
-			Overlay: &bTrue,
+		if superseded {
+			return // a newer fade or SetOpacity took over
 		}
-
-		_, err := c.conn.Filters.SetSourceFilterSettings(req)
+		_, err := c.conn.Filters.SetSourceFilterSettings(&filters.SetSourceFilterSettingsParams{
+			SourceName:     &sourceName,
+			FilterName:     &filterName,
+			FilterSettings: map[string]interface{}{"opacity": current},
+			Overlay:        &overlay,
+		})
 		if err != nil {
-			log.Printf("OBS fade error: %v", err)
+			slog.Error("obs: fade step failed", "source", sourceName, "err", err)
 			return
 		}
-
-		current += stepSize
-		time.Sleep(sleepTime)
+		current += delta
+		time.Sleep(sleep)
 	}
 }
 
-// SetOpacity sets opacity instantly and cancels any in-flight fades.
 func (c *Client) SetOpacity(sourceName, filterName string, opacity float64) {
-	// Bump the counter so any running FadeSourceOpacity stops immediately.
-	c.nextFadeGen()
-
-	bTrue := true
-	req := &filters.SetSourceFilterSettingsParams{
-		SourceName: &sourceName,
-		FilterName: &filterName,
-		FilterSettings: map[string]interface{}{
-			"opacity": opacity,
-		},
-		Overlay: &bTrue,
-	}
-
-	_, err := c.conn.Filters.SetSourceFilterSettings(req)
+	c.nextFadeGen() // cancel any in-flight fade
+	overlay := true
+	_, err := c.conn.Filters.SetSourceFilterSettings(&filters.SetSourceFilterSettingsParams{
+		SourceName:     &sourceName,
+		FilterName:     &filterName,
+		FilterSettings: map[string]interface{}{"opacity": opacity},
+		Overlay:        &overlay,
+	})
 	if err != nil {
-		log.Printf("OBS SetOpacity error: %v", err)
+		slog.Error("obs: set opacity failed", "source", sourceName, "err", err)
 	}
 }

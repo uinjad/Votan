@@ -1,7 +1,8 @@
 package engine
 
 import (
-	"fmt"
+	"crypto/subtle"
+	"log/slog"
 	"math/rand"
 	"regexp"
 	"strconv"
@@ -13,63 +14,43 @@ import (
 
 var skinRegex = regexp.MustCompile(`(?i)^!h(\d+)b(\d+)$`)
 
-// OBS source / scene names.
 const (
-	OBSSceneName      = "Main"
-	OBSWebcamSource   = "camera"
-	OBSSubscribeMovie = "subscribeMovie"
-	OBSSubscribeSong  = "subscribeSong"
+	obsSceneName      = "Main"
+	obsWebcamSource   = "camera"
+	obsSubscribeMovie = "subscribeMovie"
+	obsSubscribeSong  = "subscribeSong"
 )
 
-func (g *Game) processCommand(cmd Command) {
-	actionStr := strings.TrimSpace(cmd.Action)
-	actionLower := strings.ToLower(actionStr)
+// isAdmin compares in constant time so the secret can't be recovered via
+// timing, and never authenticates against an empty secret.
+func (g *Game) isAdmin(playerID string) bool {
+	if g.cfg.AdminSecret == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(playerID), []byte(g.cfg.AdminSecret)) == 1
+}
 
-	// Admin (Demiurge) channel.
-	if cmd.PlayerID == config.AdminSecret {
-		g.handleAdminCommand(actionStr, actionLower)
+// processCommand must be called with g.mu held (it runs from tick).
+func (g *Game) processCommand(cmd Command) {
+	action := strings.TrimSpace(cmd.Action)
+	lower := strings.ToLower(action)
+
+	if g.isAdmin(cmd.PlayerID) {
+		g.handleAdminCommand(action, lower)
 		return
 	}
 
-	// Regular players.
-	player, exists := g.Players[cmd.PlayerID]
-	if !exists {
-		spawnPos, ok := g.findFreeSpawn()
-		if !ok {
-			return
+	player, ok := g.players[cmd.PlayerID]
+	if !ok {
+		player = g.spawnPlayer(cmd)
+		if player == nil {
+			return // board full, no free cell
 		}
-
-		dbUser, err := g.DB.GetUser(cmd.PlayerID)
-
-		if err == nil && dbUser != nil {
-			player = &Player{
-				ID:           cmd.PlayerID,
-				Name:         strings.TrimPrefix(cmd.PlayerName, "@"),
-				Pos:          spawnPos,
-				Status:       dbUser.Status,
-				IsIrradiated: dbUser.IsIrradiated,
-				HeadID:       dbUser.HeadID,
-				BodyID:       dbUser.BodyID,
-				LastActive:   time.Now(),
-			}
-		} else {
-			player = &Player{
-				ID:         cmd.PlayerID,
-				Name:       strings.TrimPrefix(cmd.PlayerName, "@"),
-				Pos:        spawnPos,
-				LastActive: time.Now(),
-			}
-		}
-
-		g.Players[cmd.PlayerID] = player
-		g.Grid[spawnPos] = player
-		g.DB.UpsertUser(player.ID, player.Name, player.Pos.X, player.Pos.Y)
 	}
-
 	player.LastActive = time.Now()
 
-	// 5G radiation debuff: irradiated players can't move and babble instead.
-	if player.IsIrradiated && actionStr != "" {
+	// Irradiated players can't move; they babble instead.
+	if player.IsIrradiated && action != "" {
 		phrases := []string{
 			"Хочу ревакцинуватись!",
 			"Піду шукати роботу в офісі!",
@@ -82,223 +63,235 @@ func (g *Game) processCommand(cmd Command) {
 		return
 	}
 
-	if actionStr != "" {
-		isCommand := false
+	if action == "" {
+		return
+	}
 
-		// Hit the boss.
-		if actionLower == "!hit" && g.BossActive {
-			g.handleBossDamage()
-			isCommand = true
-
-			// Change skin.
-		} else if matches := skinRegex.FindStringSubmatch(actionLower); matches != nil {
-			g.handleSkinChange(player, matches)
-			isCommand = true
-
-			// Movement.
-		} else if strings.HasPrefix(actionLower, "!") {
-			dx, dy, steps := parseAction(actionLower)
-			if steps > 0 {
-				player.TargetDx = dx
-				player.TargetDy = dy
-				player.RemainingSteps = steps
-
-				if g.VoteActive {
-					player.Voted = true
-				}
-
-				isCommand = true
+	skinMatch := skinRegex.FindStringSubmatch(lower)
+	switch {
+	case lower == "!hit" && g.bossActive:
+		g.handleBossDamage()
+	case skinMatch != nil:
+		g.handleSkinChange(player, skinMatch)
+	case strings.HasPrefix(lower, "!"):
+		if dx, dy, steps := parseAction(lower); steps > 0 {
+			player.TargetDx, player.TargetDy, player.RemainingSteps = dx, dy, steps
+			if g.voteActive {
+				player.Voted = true
 			}
 		}
-
-		// Plain chat message.
-		if !isCommand && !strings.HasPrefix(actionStr, "!") {
-			player.LastMessage = actionStr
-			player.MessageTime = time.Now()
-		}
+	default:
+		player.LastMessage = action
+		player.MessageTime = time.Now()
 	}
+}
+
+func (g *Game) spawnPlayer(cmd Command) *Player {
+	pos, ok := g.findFreeSpawn()
+	if !ok {
+		return nil
+	}
+	p := &Player{
+		ID:         cmd.PlayerID,
+		Name:       strings.TrimPrefix(cmd.PlayerName, "@"),
+		Pos:        pos,
+		LastActive: time.Now(),
+	}
+	// Restore persisted status/skins from the in-memory profile cache (no DB
+	// access on the hot path).
+	if prof, ok := g.profiles[cmd.PlayerID]; ok {
+		p.Status = prof.Status
+		p.IsIrradiated = prof.IsIrradiated
+		p.HeadID = prof.HeadID
+		p.BodyID = prof.BodyID
+	}
+	g.players[cmd.PlayerID] = p
+	g.grid[pos] = p
+	g.store.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
+	return p
 }
 
 func (g *Game) handleBossDamage() {
-	g.BossHP -= config.BossHitDamage
-	if g.BossHP <= 0 {
-		g.BossHP = 0
-		g.BossActive = false
-		if g.OBS != nil {
-			go g.triggerVictoryMedia()
-		}
-		fmt.Println("Boss defeated by the chat.")
+	g.bossHP -= config.BossHitDamage
+	if g.bossHP <= 0 {
+		g.bossHP = 0
+		g.bossActive = false
+		go g.triggerVictoryMedia()
+		slog.Info("engine: boss defeated by chat")
 	}
 }
 
+// triggerVictoryMedia runs in its own goroutine and only touches g.scene
+// (immutable after construction), so it needs no lock.
 func (g *Game) triggerVictoryMedia() {
-	g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeMovie, true)
-	g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeSong, true)
-	g.OBS.RestartMedia(OBSSubscribeSong)
-	g.OBS.SetOpacity(OBSWebcamSource, "Fade", 1.0)
+	g.scene.SetSourceEnabled(obsSceneName, obsSubscribeMovie, true)
+	g.scene.SetSourceEnabled(obsSceneName, obsSubscribeSong, true)
+	g.scene.RestartMedia(obsSubscribeSong)
+	g.scene.SetOpacity(obsWebcamSource, "Fade", 1.0)
 	time.Sleep(30 * time.Second)
-	g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeMovie, false)
+	g.scene.SetSourceEnabled(obsSceneName, obsSubscribeMovie, false)
 }
 
-func (g *Game) handleSkinChange(p *Player, matches []string) {
-	if p.Status == 1 {
-		h, _ := strconv.Atoi(matches[1])
-		b, _ := strconv.Atoi(matches[2])
-		if h >= 0 && h <= config.MaxHeadID && b >= 0 && b <= config.MaxBodyID {
-			p.HeadID = h
-			p.BodyID = b
-			g.DB.UpdateSkin(p.ID, h, b)
-		}
-	} else {
+func (g *Game) handleSkinChange(p *Player, m []string) {
+	if p.Status != 1 {
 		p.LastMessage = "Потрібні гени R1A1a!"
 		p.MessageTime = time.Now()
+		return
+	}
+	h, _ := strconv.Atoi(m[1])
+	b, _ := strconv.Atoi(m[2])
+	if h >= 0 && h <= g.cfg.MaxHeadID && b >= 0 && b <= g.cfg.MaxBodyID {
+		p.HeadID, p.BodyID = h, b
+		g.store.UpdateSkin(p.ID, h, b)
 	}
 }
 
-func (g *Game) handleAdminCommand(actionStr, actionLower string) {
+// handleAdminCommand dispatches admin verbs. Prefix order matters: the longer,
+// more specific prefixes (!kick_unbaptized, !purge_unbaptized) MUST be matched
+// before their shorter forms (!kick, !purge).
+func (g *Game) handleAdminCommand(action, lower string) {
 	switch {
-	case strings.HasPrefix(actionLower, "!віче"):
-		parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(actionStr, "!віче")), "|")
-		g.VoteActive = true
+	case strings.HasPrefix(lower, "!віче"):
+		g.startVote(action)
 
-		for _, p := range g.Players {
-			p.Voted = false
+	case lower == "!stop_vote":
+		if g.voteActive {
+			g.voteEndTime = time.Now().Add(-time.Second)
 		}
 
-		g.VoteTopic = "ВИБІР ДОЛІ"
-		if len(parts) > 0 && parts[0] != "" {
-			g.VoteTopic = parts[0]
-		}
-		if len(parts) > 1 {
-			g.VoteOptionA = parts[1]
-		} else {
-			g.VoteOptionA = "ЗА"
-		}
-		if len(parts) > 2 {
-			g.VoteOptionB = parts[2]
-		} else {
-			g.VoteOptionB = "ПРОТИ"
-		}
-
-		g.VoteEndTime = time.Now().Add(config.VoteDuration)
-		fmt.Println("Vote started:", g.VoteTopic)
-
-	case actionLower == "!stop_vote":
-		if g.VoteActive {
-			g.VoteEndTime = time.Now().Add(-1 * time.Second)
-		}
-
-	case actionLower == "!5g":
+	case lower == "!5g":
 		g.start5GAttack()
 
-	case actionLower == "!ящер":
-		g.BossActive = true
-		g.BossHP = config.BossMaxHP
-		if g.OBS != nil {
-			go g.OBS.FadeSourceOpacity(OBSWebcamSource, "Fade", 1.0, 0.0, 20*time.Second)
-		}
+	case lower == "!ящер":
+		g.bossActive = true
+		g.bossHP = config.BossMaxHP
+		go g.scene.FadeSourceOpacity(obsWebcamSource, "Fade", 1.0, 0.0, 20*time.Second)
 
-	case actionLower == "!kill_boss":
-		g.BossActive = false
-		g.BossHP = 0
-		if g.OBS != nil {
-			go g.triggerVictoryMedia()
-		}
+	case lower == "!kill_boss":
+		g.bossActive = false
+		g.bossHP = 0
+		go g.triggerVictoryMedia()
 
-	case actionLower == "!fix_obs":
-		if g.OBS != nil {
-			g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeMovie, false)
-			g.OBS.SetSourceEnabled(OBSSceneName, OBSSubscribeSong, false)
-			g.OBS.SetOpacity(OBSWebcamSource, "Fade", 1.0)
-		}
+	case lower == "!fix_obs":
+		g.scene.SetSourceEnabled(obsSceneName, obsSubscribeMovie, false)
+		g.scene.SetSourceEnabled(obsSceneName, obsSubscribeSong, false)
+		g.scene.SetOpacity(obsWebcamSource, "Fade", 1.0)
 
-	case strings.HasPrefix(actionLower, "!rename"):
-		parts := strings.SplitN(strings.TrimSpace(strings.TrimPrefix(actionStr, "!rename")), "|", 2)
-		if len(parts) == 2 {
-			id := strings.TrimSpace(parts[0])
-			newName := strings.TrimSpace(parts[1])
-			if p, ok := g.Players[id]; ok {
-				p.Name = newName
-				if g.DB != nil {
-					g.DB.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
-				}
-				fmt.Printf("Renamed player %s to %s\n", id, newName)
-			}
-		}
+	case strings.HasPrefix(lower, "!rename"):
+		g.renamePlayer(action)
 
-	case strings.HasPrefix(actionLower, "!kick_unbaptized"):
-		countMem := 0
-		for id, p := range g.Players {
+	case strings.HasPrefix(lower, "!kick_unbaptized"):
+		n := 0
+		for id, p := range g.players {
 			if p.Status != 1 {
-				delete(g.Grid, p.Pos)
-				delete(g.Players, id)
-				countMem++
+				delete(g.grid, p.Pos)
+				delete(g.players, id)
+				n++
 			}
 		}
-		fmt.Printf("Mass kick: removed %d unbaptized from the map\n", countMem)
+		slog.Info("engine: kicked unbaptized", "count", n)
 
-	case strings.HasPrefix(actionLower, "!kick"):
-		id := strings.TrimSpace(strings.TrimPrefix(actionStr, "!kick"))
-		if p, ok := g.Players[id]; ok {
-			delete(g.Grid, p.Pos)
-			delete(g.Players, id)
-		}
+	case strings.HasPrefix(lower, "!kick"):
+		id := strings.TrimSpace(strings.TrimPrefix(action, "!kick"))
+		g.removePlayer(id)
 
-	case strings.HasPrefix(actionLower, "!baptize"):
-		id := strings.TrimSpace(strings.TrimPrefix(actionStr, "!baptize"))
-		if p, ok := g.Players[id]; ok {
+	case strings.HasPrefix(lower, "!baptize"):
+		id := strings.TrimSpace(strings.TrimPrefix(action, "!baptize"))
+		if p, ok := g.players[id]; ok {
 			p.Status = 1
 			p.HeadID, p.BodyID = 1, 1
-			g.DB.BaptizeUser(p.ID, "lucifer_blessing")
-			g.DB.UpdateSkin(p.ID, 1, 1)
+			g.store.Baptize(p.ID)
+			g.store.UpdateSkin(p.ID, 1, 1)
 			p.LastMessage = "в мене гени R1A1a"
 			p.MessageTime = time.Now()
 		}
 
-	case strings.HasPrefix(actionLower, "!purge_unbaptized"):
-		countMem, countDB := 0, 0
-		for id, p := range g.Players {
+	case strings.HasPrefix(lower, "!purge_unbaptized"):
+		fromMap, fromStore := 0, 0
+		for id, p := range g.players {
 			if p.Status != 1 {
-				delete(g.Grid, p.Pos)
-				delete(g.Players, id)
-				countMem++
+				delete(g.grid, p.Pos)
+				delete(g.players, id)
+				fromMap++
 			}
 		}
-		if g.DB != nil {
-			users, err := g.DB.LoadAllUsers()
-			if err == nil {
-				for _, u := range users {
-					if u.Status != 1 {
-						g.DB.DeleteUser(u.ID)
-						countDB++
-					}
-				}
+		for id, prof := range g.profiles {
+			if prof.Status != 1 {
+				g.store.DeleteUser(id)
+				delete(g.profiles, id)
+				fromStore++
 			}
 		}
-		fmt.Printf("Mass purge: removed %d from the map, %d from the DB\n", countMem, countDB)
+		slog.Info("engine: purged unbaptized", "from_map", fromMap, "from_store", fromStore)
 
-	case strings.HasPrefix(actionLower, "!purge"):
-		id := strings.TrimSpace(strings.TrimPrefix(actionStr, "!purge"))
-		if p, ok := g.Players[id]; ok {
-			delete(g.Grid, p.Pos)
-			delete(g.Players, id)
-		}
-		g.DB.DeleteUser(id)
-		fmt.Printf("Player %s wiped\n", id)
+	case strings.HasPrefix(lower, "!purge"):
+		id := strings.TrimSpace(strings.TrimPrefix(action, "!purge"))
+		g.removePlayer(id)
+		g.store.DeleteUser(id)
+		delete(g.profiles, id)
+		slog.Info("engine: player purged", "id", id)
 	}
 }
 
+func (g *Game) startVote(action string) {
+	rest := strings.TrimSpace(strings.TrimPrefix(action, "!віче"))
+	parts := strings.Split(rest, "|")
+
+	g.voteActive = true
+	for _, p := range g.players {
+		p.Voted = false
+	}
+
+	g.voteTopic = "ВИБІР ДОЛІ"
+	if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
+		g.voteTopic = strings.TrimSpace(parts[0])
+	}
+	g.voteOptionA = "ЗА"
+	if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
+		g.voteOptionA = strings.TrimSpace(parts[1])
+	}
+	g.voteOptionB = "ПРОТИ"
+	if len(parts) > 2 && strings.TrimSpace(parts[2]) != "" {
+		g.voteOptionB = strings.TrimSpace(parts[2])
+	}
+	g.voteEndTime = time.Now().Add(config.VoteDuration)
+	slog.Info("engine: vote started", "topic", g.voteTopic)
+}
+
 func (g *Game) start5GAttack() {
-	g.Attack5GActive = true
-	g.Attack5GEndTime = time.Now().Add(config.Attack5GDuration)
-	g.Attack5GZones = make(map[Pos]bool)
+	g.attack5GActive = true
+	g.attack5GEndTime = time.Now().Add(config.Attack5GDuration)
+	g.attack5GZones = make(map[Pos]bool)
 	for i := 0; i < 4; i++ {
-		cx, cy := rand.Intn(config.MaxX-4)+2, rand.Intn(config.MaxY-4)+2
+		cx := rand.Intn(config.MaxX-4) + 2
+		cy := rand.Intn(config.MaxY-4) + 2
 		for dx := -2; dx <= 2; dx++ {
 			for dy := -2; dy <= 2; dy++ {
-				g.Attack5GZones[Pos{X: cx + dx, Y: cy + dy}] = true
+				g.attack5GZones[Pos{X: cx + dx, Y: cy + dy}] = true
 			}
 		}
+	}
+	slog.Info("engine: 5G attack started")
+}
+
+func (g *Game) renamePlayer(action string) {
+	rest := strings.TrimSpace(strings.TrimPrefix(action, "!rename"))
+	id, name, ok := strings.Cut(rest, "|")
+	if !ok {
+		return
+	}
+	id, name = strings.TrimSpace(id), strings.TrimSpace(name)
+	if p, ok := g.players[id]; ok {
+		p.Name = name
+		g.store.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
+		slog.Info("engine: player renamed", "id", id, "name", name)
+	}
+}
+
+func (g *Game) removePlayer(id string) {
+	if p, ok := g.players[id]; ok {
+		delete(g.grid, p.Pos)
+		delete(g.players, id)
 	}
 }
 
@@ -306,7 +299,7 @@ func (g *Game) findFreeSpawn() (Pos, bool) {
 	for y := 1; y < config.MaxY-1; y++ {
 		for x := 1; x < config.MaxX-1; x++ {
 			p := Pos{X: x, Y: y}
-			if g.Grid[p] == nil && !g.BlockedCells[p] {
+			if g.grid[p] == nil && !g.blockedCells[p] {
 				return p, true
 			}
 		}
@@ -314,6 +307,9 @@ func (g *Game) findFreeSpawn() (Pos, bool) {
 	return Pos{}, false
 }
 
+// parseAction parses a movement command like "!r5". A non-positive or
+// unparseable step count yields steps == 0, which the caller ignores. This is
+// the fix for the old "!r-5" trap that produced negative deltas.
 func parseAction(action string) (dx, dy, steps int) {
 	if len(action) < 2 || action[0] != '!' {
 		return 0, 0, 0
@@ -332,9 +328,11 @@ func parseAction(action string) (dx, dy, steps int) {
 	}
 	steps = 1
 	if len(action) > 2 {
-		if s, err := strconv.Atoi(action[2:]); err == nil {
-			steps = s
+		n, err := strconv.Atoi(action[2:])
+		if err != nil || n <= 0 {
+			return 0, 0, 0 // reject garbage and non-positive counts
 		}
+		steps = n
 	}
 	if steps > config.MaxStepsPerTurn {
 		steps = config.MaxStepsPerTurn

@@ -1,162 +1,169 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
+	"context"
 	"fmt"
-	"log"
-	"net/http"
+	"log/slog"
+	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
-	"strings"
+	"syscall"
 	"time"
 
 	"Votan/internal/config"
 	"Votan/internal/engine"
 	"Votan/internal/obs"
+	"Votan/internal/server"
 	"Votan/internal/storage"
 	"Votan/internal/youtube"
 )
 
-// ConfigData is the settings payload exchanged with the frontend.
-type ConfigData struct {
-	YoutubeID string `json:"youtube_id"`
-	ObsAddr   string `json:"obs_addr"`
-	ObsPass   string `json:"obs_pass"`
-	AdminSec  string `json:"admin_sec"`
-}
-
-func openBrowser(url string) {
-	var err error
-	switch runtime.GOOS {
-	case "linux":
-		err = exec.Command("xdg-open", url).Start()
-	case "windows":
-		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	case "darwin":
-		err = exec.Command("open", url).Start()
-	default:
-		err = fmt.Errorf("unsupported platform")
-	}
-	if err != nil {
-		log.Printf("server: failed to auto-open browser: %v", err)
-	}
-}
-
-func configHandler(w http.ResponseWriter, r *http.Request) {
-	envFile := config.ActivePath
-
-	if r.Method == "GET" {
-		data := ConfigData{
-			YoutubeID: config.YouTubeVideoID,
-			ObsAddr:   config.OBSAddr,
-			ObsPass:   config.OBSPass,
-			AdminSec:  config.AdminSecret,
-		}
-		json.NewEncoder(w).Encode(data)
-		return
-	}
-
-	if r.Method == "POST" {
-		var req ConfigData
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON", http.StatusBadRequest)
-			return
-		}
-
-		content := fmt.Sprintf("YOUTUBE_VIDEO_ID=%s\nOBS_ADDR=%s\nOBS_PASS=%s\nADMIN_SECRET=%s\n",
-			req.YoutubeID, req.ObsAddr, req.ObsPass, req.AdminSec)
-
-		os.WriteFile(envFile, []byte(content), 0644)
-		w.WriteHeader(http.StatusOK)
-	}
-}
-
 func main() {
-	// === 1. STARTUP PROMPT ===
-	fmt.Println("===================================================")
-	fmt.Println("       VOTAN - INTERACTIVE STREAM GAME")
-	fmt.Println("===================================================")
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
 
-	configFile := ".env"
+	if err := run(); err != nil {
+		slog.Error("fatal", "err", err)
+		os.Exit(1)
+	}
+}
 
+func run() error {
+	// Cancelled on Ctrl+C / SIGTERM — the single source of shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	configPath := ".env"
 	if len(os.Args) > 1 {
-		configFile = os.Args[1]
-		fmt.Printf("Using config file: %s\n", configFile)
-	} else {
-		fmt.Print("Enter a config file path (or press Enter for '.env'): ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-		if input != "" {
-			configFile = input
-		}
+		configPath = os.Args[1]
 	}
 
-	fmt.Printf("Starting server with config: %s...\n", configFile)
-
-	// === 2. INITIALIZATION ===
-	config.Load(configFile)
-
-	// Scan skin assets at runtime.
-	config.ScanAssets("./web/public/assets")
-
-	db, err := storage.InitDB("votan.db")
+	cfg, err := config.Load(configPath)
 	if err != nil {
-		log.Fatalf("server: failed to connect to database: %v", err)
-	}
-	defer db.Close()
-
-	var obsClient *obs.Client
-	if config.OBSAddr != "" && config.OBSPass != "" {
-		obsClient, err = obs.NewClient(config.OBSAddr, config.OBSPass)
-		if err != nil {
-			log.Printf("server: OBS connection failed: %v", err)
-		} else {
-			log.Println("OBS connected")
-		}
+		return err
 	}
 
-	game := engine.NewGame(db, obsClient)
-	go game.Start()
-
-	if config.YouTubeVideoID != "" {
-		go youtube.ListenChat(config.YouTubeVideoID, game.CommandChan)
-		log.Printf("Listening to YouTube chat (id: %s)\n", config.YouTubeVideoID)
-	} else {
-		log.Println("YOUTUBE_VIDEO_ID is not set; chat will not be read.")
+	maxHead, maxBody, err := config.ScanAssets(cfg.AssetsDir)
+	if err != nil {
+		return err
 	}
+	slog.Info("assets scanned", "max_head", maxHead, "max_body", maxBody)
 
-	// === 3. HTTP + BROWSER ===
-	fs := http.FileServer(http.Dir("./web/public"))
-	http.Handle("/", fs)
-
-	http.HandleFunc("/api/config", configHandler)
-
-	// Reports asset counts to the frontend.
-	http.HandleFunc("/api/assets", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]int{
-			"maxHead": config.MaxHeadID,
-			"maxBody": config.MaxBodyID,
-		})
-	})
-
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		engine.HandleWebSocket(game, w, r)
-	})
-
-	go func() {
-		port := ":8080"
-		if err := http.ListenAndServe(port, nil); err != nil {
-			log.Fatalf("server: http server crashed: %v", err)
+	db, err := storage.InitDB(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	// Runs last: by the time we get here the game loop has stopped, so this
+	// flushes any queued writes and closes the DB cleanly.
+	defer func() {
+		if err := db.Close(); err != nil {
+			slog.Error("storage close", "err", err)
 		}
 	}()
 
-	time.Sleep(1 * time.Second)
+	// OBS is optional; without it the engine uses a no-op Scene.
+	var scene engine.Scene = engine.NopScene{}
+	if cfg.OBSAddr != "" && cfg.OBSPass != "" {
+		client, err := obs.NewClient(cfg.OBSAddr, cfg.OBSPass)
+		if err != nil {
+			slog.Warn("obs: connection failed, running without OBS", "err", err)
+		} else {
+			slog.Info("obs: connected")
+			scene = client
+			defer func() {
+				if err := client.Close(); err != nil {
+					slog.Warn("obs close", "err", err)
+				}
+			}()
+		}
+	}
 
-	fmt.Println("Opening the Demiurge panel...")
-	openBrowser("http://localhost:8080/admin.html")
+	game := engine.NewGame(db, scene, engine.Config{
+		AdminSecret: cfg.AdminSecret,
+		MaxHeadID:   maxHead,
+		MaxBodyID:   maxBody,
+	})
+	if err := game.RestorePlayers(ctx); err != nil {
+		slog.Warn("could not restore players", "err", err)
+	}
 
-	select {}
+	gameDone := make(chan struct{})
+	go func() {
+		defer close(gameDone)
+		game.Run(ctx)
+	}()
+
+	if cfg.YouTubeVideoID != "" {
+		go youtube.ListenChat(ctx, cfg.YouTubeVideoID, game.Commands())
+		slog.Info("listening to YouTube chat", "video", cfg.YouTubeVideoID)
+	} else {
+		slog.Info("YOUTUBE_VIDEO_ID not set; chat disabled")
+	}
+
+	srv := server.New(cfg, game, maxHead, maxBody)
+	srvDone := make(chan error, 1)
+	go func() { srvDone <- srv.Run(ctx) }()
+
+	go openAdminPanel(ctx, cfg.Addr)
+
+	// Block until a shutdown signal or a fatal server error.
+	select {
+	case <-ctx.Done():
+		slog.Info("shutdown signal received")
+	case err := <-srvDone:
+		if err != nil {
+			slog.Error("server error", "err", err)
+		}
+		stop() // unwind everything else
+		<-gameDone
+		return err
+	}
+
+	// Graceful shutdown order: server (already reacting to ctx) -> game loop ->
+	// deferred OBS/DB close.
+	if err := <-srvDone; err != nil {
+		slog.Error("server stopped with error", "err", err)
+	}
+	<-gameDone
+	slog.Info("shutdown complete")
+	return nil
+}
+
+// openAdminPanel waits until the listener actually accepts connections (instead
+// of a racy fixed sleep), then opens the operator's browser.
+func openAdminPanel(ctx context.Context, addr string) {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return
+		}
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	url := "http://" + addr + "/admin.html"
+	slog.Info("opening admin panel", "url", url)
+	if err := openBrowser(url); err != nil {
+		slog.Warn("could not auto-open browser", "err", err)
+	}
+}
+
+func openBrowser(url string) error {
+	switch runtime.GOOS {
+	case "linux":
+		return exec.Command("xdg-open", url).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		return exec.Command("open", url).Start()
+	default:
+		return fmt.Errorf("unsupported platform %q", runtime.GOOS)
+	}
 }

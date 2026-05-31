@@ -1,0 +1,20 @@
+run:
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck      # unchecked errors
+    - errorlint     # correct error wrapping/comparison
+    - govet
+    - staticcheck
+    - gosimple
+    - unused
+    - ineffassign
+    - bodyclose     # HTTP response bodies must be closed
+    - gofmt
+    - misspell
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

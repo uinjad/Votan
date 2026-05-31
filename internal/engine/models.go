@@ -1,20 +1,20 @@
 package engine
 
-import (
-	"time"
-)
+import "time"
 
 type Pos struct {
 	X int `json:"x"`
 	Y int `json:"y"`
 }
 
+// Command is a single chat or admin instruction fed into the game loop.
 type Command struct {
 	PlayerID   string
 	PlayerName string
 	Action     string
 }
 
+// Player is the in-memory domain entity. It never leaves the engine.
 type Player struct {
 	ID             string
 	Name           string
@@ -33,10 +33,11 @@ type Player struct {
 	LastMessage     string
 	MessageTime     time.Time
 
-	// Whether the player has acted (moved) during the current vote.
+	// Voted reports whether the player acted (moved) during the current vote.
 	Voted bool
 }
 
+// GameState is the wire model sent to the overlay and dashboard.
 type GameState struct {
 	Players []PlayerState `json:"players"`
 
@@ -61,8 +62,9 @@ type GameState struct {
 	BossMaxHP  int  `json:"bossMaxHP"`
 }
 
+// PlayerState is the wire projection of a Player.
 type PlayerState struct {
-	ID           string `json:"id"` // exposed so the admin panel can target players
+	ID           string `json:"id"`
 	Name         string `json:"name"`
 	X            int    `json:"x"`
 	Y            int    `json:"y"`
@@ -71,7 +73,5 @@ type PlayerState struct {
 	HeadID       int    `json:"headId"`
 	BodyID       int    `json:"bodyId"`
 	Message      string `json:"message"`
-
-	// Vote status, forwarded to the frontend.
-	Voted bool `json:"voted"`
+	Voted        bool   `json:"voted"`
 }

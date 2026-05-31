@@ -1,124 +1,183 @@
 package engine
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
 	"Votan/internal/config"
-	"Votan/internal/obs"
-	"Votan/internal/storage"
 )
 
-type Game struct {
-	mu           sync.RWMutex
-	Players      map[string]*Player
-	Grid         map[Pos]*Player
-	BlockedCells map[Pos]bool
-	CommandChan  chan Command
-	DB           *storage.DB
-	OBS          *obs.Client
-
-	VoteActive      bool
-	VoteTopic       string
-	VoteOptionA     string
-	VoteOptionB     string
-	VoteEndTime     time.Time
-	VoteResult      string
-	VoteResultEnd   time.Time
-	VoteSoundPlayed bool
-
-	Attack5GActive  bool
-	Attack5GZones   map[Pos]bool
-	Attack5GEndTime time.Time
-
-	BossActive bool
-	BossHP     int
+// Config is the runtime configuration the engine needs. It is injected at
+// construction; the engine holds no global state.
+type Config struct {
+	AdminSecret string
+	MaxHeadID   int
+	MaxBodyID   int
 }
 
-func NewGame(db *storage.DB, obsClient *obs.Client) *Game {
+// Game owns all game state. State is mutated only from the Run loop and read
+// under the RWMutex, so every field below is guarded by mu.
+type Game struct {
+	cfg   Config
+	store Store
+	scene Scene
+
+	mu           sync.RWMutex
+	players      map[string]*Player
+	grid         map[Pos]*Player
+	blockedCells map[Pos]bool
+
+	// profiles is the persisted projection of every known user, loaded once at
+	// startup so first-touch restores never hit the database on the hot path.
+	profiles map[string]UserRecord
+
+	commands chan Command
+
+	// vote state
+	voteActive      bool
+	voteTopic       string
+	voteOptionA     string
+	voteOptionB     string
+	voteEndTime     time.Time
+	voteResult      string
+	voteResultEnd   time.Time
+	voteSoundPlayed bool
+
+	// 5G attack state
+	attack5GActive  bool
+	attack5GZones   map[Pos]bool
+	attack5GEndTime time.Time
+
+	// boss state
+	bossActive bool
+	bossHP     int
+}
+
+const commandBuffer = 1024
+
+// NewGame builds a Game. A nil store or scene is normalised to a no-op
+// implementation, so callers (and tests) need no nil checks downstream.
+func NewGame(store Store, scene Scene, cfg Config) *Game {
+	if store == nil {
+		store = NopStore{}
+	}
+	if scene == nil {
+		scene = NopScene{}
+	}
 	g := &Game{
-		Players:      make(map[string]*Player),
-		Grid:         make(map[Pos]*Player),
-		BlockedCells: make(map[Pos]bool),
-		CommandChan:  make(chan Command, 1000),
-		DB:           db,
-		OBS:          obsClient,
+		cfg:          cfg,
+		store:        store,
+		scene:        scene,
+		players:      make(map[string]*Player),
+		grid:         make(map[Pos]*Player),
+		blockedCells: make(map[Pos]bool),
+		profiles:     make(map[string]UserRecord),
+		commands:     make(chan Command, commandBuffer),
 	}
 	g.initStaticMap()
 	return g
 }
 
-func (g *Game) RestorePlayersFromDB() {
-	users, err := g.DB.LoadAllUsers()
+// Commands returns the send-only channel used to feed chat and admin commands
+// into the game loop.
+func (g *Game) Commands() chan<- Command { return g.commands }
+
+// RestorePlayers loads all persisted users once at startup: every user is
+// cached in profiles (for first-touch restore of status/skins), and those
+// whose saved position is still valid and free are placed back on the grid, so
+// a restart preserves the board.
+func (g *Game) RestorePlayers(ctx context.Context) error {
+	users, err := g.store.LoadAllUsers(ctx)
 	if err != nil {
-		fmt.Println("Failed to restore players from DB:", err)
-		return
+		return fmt.Errorf("engine: restore players: %w", err)
 	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	placed := 0
 	for _, u := range users {
+		g.profiles[u.ID] = u
 		pos := Pos{X: u.X, Y: u.Y}
-		if pos.X >= 0 && pos.X < config.MaxX && pos.Y >= 0 && pos.Y < config.MaxY && g.Grid[pos] == nil && !g.BlockedCells[pos] {
-			player := &Player{
+		if g.cellFree(pos) {
+			p := &Player{
 				ID: u.ID, Name: u.Name, Pos: pos, LastActive: time.Now(),
 				Status: u.Status, IsIrradiated: u.IsIrradiated,
 				HeadID: u.HeadID, BodyID: u.BodyID,
 			}
-			g.Players[u.ID] = player
-			g.Grid[pos] = player
+			g.players[u.ID] = p
+			g.grid[pos] = p
+			placed++
 		}
 	}
-	fmt.Printf("Restored %d players from the database\n", len(g.Players))
+	slog.Info("engine: players restored", "cached", len(g.profiles), "placed", placed)
+	return nil
 }
 
-// blockArea marks a rectangular region as impassable.
+// Run owns all game state. It blocks until ctx is cancelled, then stops its
+// tickers and returns, letting the caller shut down cleanly.
+func (g *Game) Run(ctx context.Context) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	cleanup := time.NewTicker(1 * time.Minute)
+	defer cleanup.Stop()
+
+	slog.Info("engine: game loop started")
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("engine: game loop stopped")
+			return
+		case <-ticker.C:
+			g.tick()
+		case <-cleanup.C:
+			g.cleanupInactive()
+		}
+	}
+}
+
+// cellFree reports whether pos is in bounds, unblocked and unoccupied.
+func (g *Game) cellFree(pos Pos) bool {
+	return pos.X >= 0 && pos.X < config.MaxX &&
+		pos.Y >= 0 && pos.Y < config.MaxY &&
+		g.grid[pos] == nil && !g.blockedCells[pos]
+}
+
 func (g *Game) blockArea(x1, y1, x2, y2 int) {
 	for x := x1; x <= x2; x++ {
 		for y := y1; y <= y2; y++ {
-			g.BlockedCells[Pos{X: x, Y: y}] = true
+			g.blockedCells[Pos{X: x, Y: y}] = true
 		}
 	}
 }
 
 func (g *Game) initStaticMap() {
-	// 1. Block the screen edges.
 	for x := 0; x < config.MaxX; x++ {
-		g.BlockedCells[Pos{X: x, Y: 0}] = true
-		g.BlockedCells[Pos{X: x, Y: config.MaxY - 1}] = true
+		g.blockedCells[Pos{X: x, Y: 0}] = true
+		g.blockedCells[Pos{X: x, Y: config.MaxY - 1}] = true
 	}
 	for y := 0; y < config.MaxY; y++ {
-		g.BlockedCells[Pos{X: 0, Y: y}] = true
-		g.BlockedCells[Pos{X: config.MaxX - 1, Y: y}] = true
+		g.blockedCells[Pos{X: 0, Y: y}] = true
+		g.blockedCells[Pos{X: config.MaxX - 1, Y: y}] = true
 	}
-
-	// 2. Static obstacles (decor).
+	// Static obstacles (decor).
 	g.blockArea(9, 25, 10, 30)
 	g.blockArea(16, 9, 17, 10)
 	g.blockArea(15, 6, 16, 7)
-}
-
-func (g *Game) Start() {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	cleanupTicker := time.NewTicker(1 * time.Minute)
-
-	for {
-		select {
-		case <-ticker.C:
-			g.tick()
-		case <-cleanupTicker.C:
-			g.cleanupInactive()
-		}
-	}
 }
 
 func (g *Game) cleanupInactive() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	threshold := time.Now().Add(-1 * config.PlayerTimeout)
-	for id, p := range g.Players {
+	threshold := time.Now().Add(-config.PlayerTimeout)
+	for id, p := range g.players {
 		if p.LastActive.Before(threshold) {
-			delete(g.Grid, p.Pos)
-			delete(g.Players, id)
+			delete(g.grid, p.Pos)
+			delete(g.players, id)
 		}
 	}
 }
@@ -127,162 +186,136 @@ func (g *Game) tick() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	commandsToProcess := len(g.CommandChan)
-	for i := 0; i < commandsToProcess; i++ {
-		cmd := <-g.CommandChan
-		g.processCommand(cmd)
+	// Drain a snapshot of the command buffer. len() is a point-in-time reading
+	// and only this goroutine receives, so the receives never block.
+	for n := len(g.commands); n > 0; n-- {
+		g.processCommand(<-g.commands)
 	}
 
 	g.processVoteEvent()
 	g.process5GEvent()
 	g.processDebuffs()
+	g.movePlayers()
+}
 
-	// Movement and collision.
-	for _, p := range g.Players {
-		if p.RemainingSteps > 0 {
-			nextPos := Pos{X: p.Pos.X + p.TargetDx, Y: p.Pos.Y + p.TargetDy}
-
-			// Check bounds, other players and static obstacles.
-			if nextPos.X < 0 || nextPos.X >= config.MaxX || nextPos.Y < 0 || nextPos.Y >= config.MaxY ||
-				g.Grid[nextPos] != nil ||
-				g.BlockedCells[nextPos] {
-
-				p.RemainingSteps = 0
-				continue
-			}
-
-			// Take the step.
-			delete(g.Grid, p.Pos)
-			p.Pos = nextPos
-			g.Grid[p.Pos] = p
-			p.RemainingSteps--
-
-			if g.DB != nil {
-				g.DB.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
-			}
+func (g *Game) movePlayers() {
+	for _, p := range g.players {
+		if p.RemainingSteps <= 0 {
+			continue
 		}
+		next := Pos{X: p.Pos.X + p.TargetDx, Y: p.Pos.Y + p.TargetDy}
+		if !g.cellFree(next) {
+			p.RemainingSteps = 0
+			continue
+		}
+		delete(g.grid, p.Pos)
+		p.Pos = next
+		g.grid[next] = p
+		p.RemainingSteps--
+
+		// Async, non-blocking: never stalls the tick on disk I/O.
+		g.store.UpsertUser(p.ID, p.Name, p.Pos.X, p.Pos.Y)
 	}
 }
 
 func (g *Game) processVoteEvent() {
-	if g.VoteActive {
-		timeLeft := time.Until(g.VoteEndTime)
-
-		if timeLeft <= 5*time.Second && !g.VoteSoundPlayed {
-			g.VoteSoundPlayed = true
-			if g.OBS != nil {
-				g.OBS.RestartMedia("viche")
-			}
+	if g.voteActive {
+		if time.Until(g.voteEndTime) <= 5*time.Second && !g.voteSoundPlayed {
+			g.voteSoundPlayed = true
+			g.scene.RestartMedia("viche")
 		}
+		if time.Now().After(g.voteEndTime) {
+			scoreA, scoreB := g.tallyVotes()
+			g.voteActive = false
+			g.voteSoundPlayed = false
 
-		if time.Now().After(g.VoteEndTime) {
-			scoreA, scoreB := g.calculateCurrentScores()
-			g.VoteActive = false
-			g.VoteSoundPlayed = false
-
-			var winner string
-			if scoreA > scoreB {
-				winner = g.VoteOptionA
-			} else if scoreB > scoreA {
-				winner = g.VoteOptionB
-			} else {
-				winner = "НІЧИЯ"
+			winner := "НІЧИЯ"
+			switch {
+			case scoreA > scoreB:
+				winner = g.voteOptionA
+			case scoreB > scoreA:
+				winner = g.voteOptionB
 			}
-			g.VoteResult = fmt.Sprintf("РІШЕННЯ: %s (Рахунок %d:%d)", winner, scoreA, scoreB)
-			g.VoteResultEnd = time.Now().Add(config.VoteResultTTL)
+			g.voteResult = fmt.Sprintf("РІШЕННЯ: %s (Рахунок %d:%d)", winner, scoreA, scoreB)
+			g.voteResultEnd = time.Now().Add(config.VoteResultTTL)
 		}
 	}
-
-	if g.VoteResult != "" && time.Now().After(g.VoteResultEnd) {
-		g.VoteResult = ""
+	if g.voteResult != "" && time.Now().After(g.voteResultEnd) {
+		g.voteResult = ""
 	}
 }
 
-func (g *Game) calculateCurrentScores() (int, int) {
-	scoreA, scoreB := 0, 0
-
-	if !g.VoteActive {
+func (g *Game) tallyVotes() (scoreA, scoreB int) {
+	if !g.voteActive {
 		return 0, 0
 	}
-
 	midX := config.MaxX / 2
-	for _, p := range g.Players {
-		if p.Status != 1 {
+	for _, p := range g.players {
+		if p.Status != 1 || !p.Voted {
 			continue
 		}
-		if !p.Voted {
-			continue
-		}
-
 		if p.Pos.X <= midX {
-			scoreA += 1
+			scoreA++
 		} else {
-			scoreB += 1
+			scoreB++
 		}
 	}
 	return scoreA, scoreB
 }
 
 func (g *Game) process5GEvent() {
-	if g.Attack5GActive && time.Now().After(g.Attack5GEndTime) {
-		g.Attack5GActive = false
-		for _, p := range g.Players {
-			if g.Attack5GZones[p.Pos] {
+	if g.attack5GActive && time.Now().After(g.attack5GEndTime) {
+		g.attack5GActive = false
+		for _, p := range g.players {
+			if g.attack5GZones[p.Pos] {
 				p.IsIrradiated = true
 				p.IrradiatedUntil = time.Now().Add(config.Debuff5GDuration)
-				if g.DB != nil {
-					g.DB.SetIrradiated(p.ID, true)
-				}
+				g.store.SetIrradiated(p.ID, true)
 			}
 		}
-		g.Attack5GZones = nil
+		g.attack5GZones = nil
 	}
 }
 
 func (g *Game) processDebuffs() {
 	now := time.Now()
-	for _, p := range g.Players {
+	for _, p := range g.players {
 		if p.IsIrradiated && now.After(p.IrradiatedUntil) {
 			p.IsIrradiated = false
-			if g.DB != nil {
-				g.DB.SetIrradiated(p.ID, false)
-			}
+			g.store.SetIrradiated(p.ID, false)
 		}
 	}
 }
 
+// GetState returns a snapshot of the wire model. Safe for concurrent callers.
 func (g *Game) GetState() GameState {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
-	scoreA, scoreB := g.calculateCurrentScores()
-
+	scoreA, scoreB := g.tallyVotes()
 	state := GameState{
-		Players:        make([]PlayerState, 0, len(g.Players)),
-		VoteActive:     g.VoteActive,
-		VoteTopic:      g.VoteTopic,
-		VoteOptionA:    g.VoteOptionA,
-		VoteOptionB:    g.VoteOptionB,
+		Players:        make([]PlayerState, 0, len(g.players)),
+		VoteActive:     g.voteActive,
+		VoteTopic:      g.voteTopic,
+		VoteOptionA:    g.voteOptionA,
+		VoteOptionB:    g.voteOptionB,
 		VoteScoreA:     scoreA,
 		VoteScoreB:     scoreB,
-		VoteResult:     g.VoteResult,
-		Attack5GActive: g.Attack5GActive,
-		BossActive:     g.BossActive,
-		BossHP:         g.BossHP,
+		VoteResult:     g.voteResult,
+		Attack5GActive: g.attack5GActive,
+		BossActive:     g.bossActive,
+		BossHP:         g.bossHP,
 		BossMaxHP:      config.BossMaxHP,
 	}
-
-	if g.VoteActive {
-		state.VoteTimeLeft = int(time.Until(g.VoteEndTime).Seconds())
+	if g.voteActive {
+		state.VoteTimeLeft = int(time.Until(g.voteEndTime).Seconds())
 	}
-
-	if g.Attack5GActive {
-		for z := range g.Attack5GZones {
+	if g.attack5GActive {
+		for z := range g.attack5GZones {
 			state.Attack5GZones = append(state.Attack5GZones, z)
 		}
 	}
-
-	for _, p := range g.Players {
+	for _, p := range g.players {
 		msg := ""
 		if time.Since(p.MessageTime) < config.ChatBubbleTTL {
 			msg = p.LastMessage

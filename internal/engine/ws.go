@@ -1,7 +1,8 @@
 package engine
 
 import (
-	"log"
+	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -9,39 +10,51 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // accept any origin (local UI only)
-	},
+	// The server binds to loopback (see config.DefaultAddr), so any origin
+	// reaching it is already on this machine. Allowing all origins is safe
+	// under that threat model and keeps the OBS browser source working.
+	CheckOrigin: func(*http.Request) bool { return true },
 }
 
-// HandleWebSocket serves both the game overlay and the admin dashboard.
-func HandleWebSocket(g *Game, w http.ResponseWriter, r *http.Request) {
+// HandleWebSocket serves both the overlay and the admin dashboard. It returns
+// when the client disconnects or when ctx is cancelled (server shutdown).
+//
+// gorilla/websocket requires a single concurrent writer: only the loop below
+// writes, and the reader goroutine never writes.
+func HandleWebSocket(ctx context.Context, g *Game, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("ws: failed to upgrade connection: %v", err)
+		slog.Warn("ws: upgrade failed", "err", err)
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
-	// 1. Reader goroutine for incoming commands (from the admin panel or Flipper).
+	// Reader: forward inbound commands until the socket errors or we shut down.
 	go func() {
 		for {
 			var cmd Command
 			if err := conn.ReadJSON(&cmd); err != nil {
-				return // client disconnected
+				return
 			}
-			g.CommandChan <- cmd
+			select {
+			case g.commands <- cmd:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
-	// 2. Push game state to the client every 100 ms.
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		state := g.GetState()
-		if err := conn.WriteJSON(state); err != nil {
-			return // browser closed
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := conn.WriteJSON(g.GetState()); err != nil {
+				return // client closed; defer closes the conn, unblocking reader
+			}
 		}
 	}
 }

@@ -1,152 +1,141 @@
 package engine
 
 import (
+	"context"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"Votan/internal/config"
 )
 
-// setupTestGame returns a clean, headless game (no DB, no OBS).
-func setupTestGame() *Game {
-	return NewGame(nil, nil)
+func newTestGame() *Game {
+	return NewGame(nil, nil, Config{MaxHeadID: 10, MaxBodyID: 10})
 }
 
-// TEST 1: movement and collisions.
 func TestMovementAndCollisions(t *testing.T) {
-	g := setupTestGame()
+	g := newTestGame()
 
-	p1 := &Player{
-		ID: "p1", Name: "Ivan",
-		Pos: Pos{X: 10, Y: 10},
-	}
-	g.Players["p1"] = p1
-	g.Grid[p1.Pos] = p1
-
-	// 1.1: successful move.
-	p1.TargetDx = 1
-	p1.TargetDy = 0
-	p1.RemainingSteps = 1
+	// 1.1: a free move succeeds.
+	p1 := &Player{ID: "p1", Pos: Pos{X: 10, Y: 10}, TargetDx: 1, RemainingSteps: 1}
+	g.players["p1"] = p1
+	g.grid[p1.Pos] = p1
 	g.tick()
-
 	if p1.Pos.X != 11 || p1.Pos.Y != 10 {
-		t.Errorf("player did not move to the expected cell. current pos: %v", p1.Pos)
+		t.Errorf("expected move to (11,10), got (%d,%d)", p1.Pos.X, p1.Pos.Y)
 	}
 
-	// 1.2: collision with the map edge (wall).
+	// 1.2: a wall stops movement.
 	p1.Pos = Pos{X: config.MaxX - 1, Y: 10}
-	g.Grid[p1.Pos] = p1
-	p1.TargetDx = 1
-	p1.TargetDy = 0
-	p1.RemainingSteps = 1
+	g.grid[p1.Pos] = p1
+	p1.TargetDx, p1.RemainingSteps = 1, 1
 	g.tick()
-
-	if p1.Pos.X >= config.MaxX {
-		t.Errorf("player went out of bounds. pos: %v", p1.Pos)
-	}
-	if p1.RemainingSteps != 0 {
-		t.Errorf("steps were not reset after hitting a wall")
+	if p1.Pos.X >= config.MaxX || p1.RemainingSteps != 0 {
+		t.Errorf("wall not respected: pos.X=%d steps=%d", p1.Pos.X, p1.RemainingSteps)
 	}
 
-	// 1.3: collision with another player.
+	// 1.3: collision with another player blocks the move.
 	p2 := &Player{ID: "p2", Pos: Pos{X: 10, Y: 10}}
-	g.Players["p2"] = p2
-	g.Grid[p2.Pos] = p2
-
+	g.players["p2"] = p2
+	g.grid[p2.Pos] = p2
 	p1.Pos = Pos{X: 9, Y: 10}
-	g.Grid[p1.Pos] = p1
-	p1.TargetDx = 1
-	p1.TargetDy = 0
-	p1.RemainingSteps = 1
+	g.grid[p1.Pos] = p1
+	p1.TargetDx, p1.RemainingSteps = 1, 1
 	g.tick()
-
 	if p1.Pos.X == 10 {
-		t.Errorf("player p1 stepped onto player p2")
+		t.Error("player walked through another player")
 	}
 
-	// 1.4: collision with a static obstacle.
-	obstaclePos := Pos{X: 15, Y: 15}
-	g.BlockedCells[obstaclePos] = true
+	// 1.4: a static obstacle blocks the move.
+	obstacle := Pos{X: 15, Y: 15}
+	g.blockedCells[obstacle] = true
 	p1.Pos = Pos{X: 14, Y: 15}
-	g.Grid[p1.Pos] = p1
-	p1.TargetDx = 1
-	p1.TargetDy = 0
-	p1.RemainingSteps = 1
+	g.grid[p1.Pos] = p1
+	p1.TargetDx, p1.RemainingSteps = 1, 1
 	g.tick()
-
-	if p1.Pos == obstaclePos {
-		t.Errorf("player walked through a static obstacle")
+	if p1.Pos == obstacle {
+		t.Error("player walked onto a static obstacle")
 	}
 }
 
-// TEST 2: voting logic.
 func TestVotingSystem(t *testing.T) {
-	g := setupTestGame()
-	g.VoteActive = true
+	g := newTestGame()
+	g.voteActive = true
 
-	// Unbaptized (gray): should not count.
-	p1 := &Player{ID: "p1", Status: 0, Voted: true, Pos: Pos{X: 5, Y: 10}}
-	g.Players["p1"] = p1
-
-	// Baptized, did not move: should not count.
-	p2 := &Player{ID: "p2", Status: 1, Voted: false, Pos: Pos{X: 5, Y: 11}}
-	g.Players["p2"] = p2
-
-	// Baptized, moved to the "for" side.
-	p3 := &Player{ID: "p3", Status: 1, Voted: true, Pos: Pos{X: 5, Y: 12}}
-	g.Players["p3"] = p3
-
-	// Baptized, moved to the "against" side.
-	p4 := &Player{ID: "p4", Status: 1, Voted: true, Pos: Pos{X: 15, Y: 12}}
-	g.Players["p4"] = p4
-
-	scoreA, scoreB := g.calculateCurrentScores()
-
-	if scoreA != 1 {
-		t.Errorf("expected 1 vote for side A, got: %d", scoreA)
+	add := func(id string, x int, status int, voted bool) {
+		g.players[id] = &Player{ID: id, Pos: Pos{X: x, Y: 10}, Status: status, Voted: voted}
 	}
-	if scoreB != 1 {
-		t.Errorf("expected 1 vote for side B, got: %d", scoreB)
+	add("a", 5, 1, true)  // baptized, voted, left  -> A
+	add("b", 15, 1, true) // baptized, voted, right -> B
+	add("c", 3, 0, true)  // unbaptized -> ignored
+	add("d", 4, 1, false) // didn't vote -> ignored
+
+	scoreA, scoreB := g.tallyVotes()
+	if scoreA != 1 || scoreB != 1 {
+		t.Errorf("expected 1:1, got %d:%d", scoreA, scoreB)
 	}
 }
 
-// TEST 3: AFK player cleanup.
 func TestCleanupInactivePlayers(t *testing.T) {
-	g := setupTestGame()
-
-	p1 := &Player{ID: "p1", Pos: Pos{X: 5, Y: 5}, LastActive: time.Now().Add(-1 * time.Second)}
-	g.Players["p1"] = p1
-	g.Grid[p1.Pos] = p1
-
-	// p2 has been AFK for 24h, which guarantees removal.
-	p2 := &Player{ID: "p2", Pos: Pos{X: 6, Y: 6}, LastActive: time.Now().Add(-24 * time.Hour)}
-	g.Players["p2"] = p2
-	g.Grid[p2.Pos] = p2
+	g := newTestGame()
+	g.players["active"] = &Player{ID: "active", Pos: Pos{X: 5, Y: 5}, LastActive: time.Now()}
+	g.players["afk"] = &Player{ID: "afk", Pos: Pos{X: 6, Y: 6}, LastActive: time.Now().Add(-24 * time.Hour)}
 
 	g.cleanupInactive()
 
-	if _, exists := g.Players["p1"]; !exists {
-		t.Errorf("an active player was removed by mistake")
+	if _, ok := g.players["active"]; !ok {
+		t.Error("active player was wrongly removed")
 	}
-	if _, exists := g.Players["p2"]; exists {
-		t.Errorf("the AFK player was not removed")
+	if _, ok := g.players["afk"]; ok {
+		t.Error("AFK player was not cleaned up")
 	}
 }
 
-// TEST 4: radiation debuff expiry.
 func TestDebuffs(t *testing.T) {
-	g := setupTestGame()
-
-	p1 := &Player{
-		ID:              "p1",
-		IsIrradiated:    true,
-		IrradiatedUntil: time.Now().Add(-1 * time.Second),
-	}
-	g.Players["p1"] = p1
+	g := newTestGame()
+	p := &Player{ID: "p", IsIrradiated: true, IrradiatedUntil: time.Now().Add(-time.Second)}
+	g.players["p"] = p
 
 	g.processDebuffs()
 
-	if p1.IsIrradiated {
-		t.Errorf("the radiation debuff did not expire after its duration")
+	if p.IsIrradiated {
+		t.Error("expired debuff was not cleared")
 	}
+}
+
+// TestConcurrentAccessIsRaceFree exercises the locking by hammering the command
+// channel and GetState while the loop runs. Run with: go test -race ./...
+func TestConcurrentAccessIsRaceFree(t *testing.T) {
+	g := newTestGame()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() { defer close(done); g.Run(ctx) }()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			id := fmt.Sprintf("u%d", n)
+			for j := 0; j < 200; j++ {
+				g.Commands() <- Command{PlayerID: id, PlayerName: id, Action: "!r1"}
+			}
+		}(i)
+	}
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_ = g.GetState()
+			}
+		}()
+	}
+
+	wg.Wait()
+	cancel()
+	<-done
 }
