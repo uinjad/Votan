@@ -13,6 +13,7 @@ import (
 
 	"Votan/internal/config"
 	"Votan/internal/engine"
+	"Votan/internal/web"
 )
 
 const shutdownTimeout = 5 * time.Second
@@ -50,7 +51,7 @@ func New(cfg *config.Config, game *engine.Game, maxHead, maxBody int) *Server {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.Dir(cfg.WebDir)))
+	mux.Handle("/", http.FileServerFS(web.Assets()))
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/assets", s.handleAssets)
 	mux.HandleFunc("/ws", s.handleWS)

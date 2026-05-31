@@ -17,6 +17,7 @@ import (
 	"Votan/internal/obs"
 	"Votan/internal/server"
 	"Votan/internal/storage"
+	"Votan/internal/web"
 	"Votan/internal/youtube"
 )
 
@@ -46,10 +47,7 @@ func run() error {
 		return err
 	}
 
-	maxHead, maxBody, err := config.ScanAssets(cfg.AssetsDir)
-	if err != nil {
-		return err
-	}
+	maxHead, maxBody := web.ScanSkins()
 	slog.Info("assets scanned", "max_head", maxHead, "max_body", maxBody)
 
 	db, err := storage.InitDB(cfg.DBPath)

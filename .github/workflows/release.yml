@@ -18,26 +18,22 @@ jobs:
           go-version: "1.25"
           cache: true
 
-      - name: Build cross-platform archives
+      - name: Build self-contained binaries (Windows + macOS)
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME}"
           mkdir -p dist
-          targets="linux/amd64 windows/amd64 darwin/amd64 darwin/arm64"
+          # The UI is embedded via //go:embed, so each binary is a single,
+          # self-contained executable — nothing else to ship.
+          targets="windows/amd64 darwin/amd64 darwin/arm64"
           for t in $targets; do
             os="${t%/*}"; arch="${t#*/}"
-            bin="Votan"; [ "$os" = "windows" ] && bin="Votan.exe"
-            stage="Votan_${VERSION}_${os}_${arch}"
-            mkdir -p "$stage/web"
-            # CGO-free pure-Go build (glebarez sqlite is pure Go) -> static binary.
+            out="dist/Votan_${VERSION}_${os}_${arch}"
+            [ "$os" = "windows" ] && out="${out}.exe"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags="-s -w" -o "$stage/$bin" ./cmd/server
-            cp -r web/public "$stage/web/"
-            cp README.md "$stage/"
-            printf 'OBS_ADDR=localhost:4455\nOBS_PASS=your_password\nADMIN_SECRET=your_secret_token\nYOUTUBE_VIDEO_ID=\n' > "$stage/.env"
-            zip -rq "dist/${stage}.zip" "$stage"
+              go build -trimpath -ldflags="-s -w" -o "$out" ./cmd/server
           done
-          (cd dist && sha256sum *.zip > checksums.txt)
+          (cd dist && sha256sum * > checksums.txt)
           ls -la dist
 
       - name: Publish GitHub Release
@@ -45,6 +41,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
-            dist/*.zip dist/checksums.txt \
+            dist/* \
             --title "Votan ${GITHUB_REF_NAME}" \
             --generate-notes

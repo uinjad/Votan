@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -37,10 +35,8 @@ const (
 	// DefaultAddr binds to loopback on purpose: the admin panel and the
 	// /api/config endpoint expose local secrets, so the server must not be
 	// reachable from the network. See README "Known limitations".
-	DefaultAddr      = "127.0.0.1:8080"
-	DefaultDBPath    = "votan.db"
-	DefaultWebDir    = "./web/public"
-	DefaultAssetsDir = "./web/public/assets"
+	DefaultAddr   = "127.0.0.1:8080"
+	DefaultDBPath = "votan.db"
 )
 
 // Config is the runtime configuration. It is loaded once and injected into the
@@ -52,9 +48,7 @@ type Config struct {
 	YouTubeVideoID string
 	AdminSecret    string
 
-	DBPath    string
-	WebDir    string
-	AssetsDir string
+	DBPath string
 
 	// ActivePath is the dotenv file this config was loaded from, so the admin
 	// panel can persist edits back to the same file.
@@ -68,8 +62,6 @@ func Load(path string) (*Config, error) {
 	cfg := &Config{
 		Addr:       DefaultAddr,
 		DBPath:     DefaultDBPath,
-		WebDir:     DefaultWebDir,
-		AssetsDir:  DefaultAssetsDir,
 		ActivePath: path,
 	}
 
@@ -107,39 +99,4 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	return cfg, nil
-}
-
-var (
-	headRe = regexp.MustCompile(`^head_(\d+)\.png$`)
-	bodyRe = regexp.MustCompile(`^body_(\d+)\.png$`)
-)
-
-// ScanAssets discovers the highest head_N / body_N skin ids in dir so the
-// available range isn't hardcoded and can grow by dropping files in. A missing
-// directory yields (0, 0, nil).
-func ScanAssets(dir string) (maxHead, maxBody int, err error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return 0, 0, nil
-		}
-		return 0, 0, fmt.Errorf("config: scan assets %q: %w", dir, err)
-	}
-
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if m := headRe.FindStringSubmatch(name); m != nil {
-			if id, _ := strconv.Atoi(m[1]); id > maxHead {
-				maxHead = id
-			}
-		} else if m := bodyRe.FindStringSubmatch(name); m != nil {
-			if id, _ := strconv.Atoi(m[1]); id > maxBody {
-				maxBody = id
-			}
-		}
-	}
-	return maxHead, maxBody, nil
 }
