@@ -21,6 +21,13 @@ import (
 	"Votan/internal/youtube"
 )
 
+// version is the build version, injected at release time via
+//
+//	-ldflags "-X main.version=v1.2.3"
+//
+// and defaults to "dev" for local builds.
+var version = "dev"
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -36,6 +43,8 @@ func run() error {
 	// Cancelled on Ctrl+C / SIGTERM — the single source of shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	slog.Info("Votan starting", "version", version, "go", runtime.Version())
 
 	configPath := ".env"
 	if len(os.Args) > 1 {

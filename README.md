@@ -36,6 +36,10 @@ entity, `PlayerState` is the JSON the frontend gets.
 
 A few decisions worth calling out:
 
+- **Single self-contained binary.** The overlay and admin UI are embedded into
+  the executable with `//go:embed`, so a release is one file — download it, run
+  it, done. No assets to copy, no install step.
+
 - **Dependency inversion.** The engine depends on two small interfaces it owns
   itself — `Store` (persistence) and `Scene` (OBS) — not on concrete types. The
   SQLite and OBS packages implement those interfaces; the engine never imports
@@ -48,8 +52,7 @@ A few decisions worth calling out:
   returns immediately, so a slow disk can never stall a tick. That one goroutine
   also serialises every write, which keeps SQLite happy. The in-memory state is
   authoritative; the database is a convenience for surviving restarts. Under
-  extreme load the queue sheds writes (and logs it) rather than blocking the
-  game.
+  extreme load the queue sheds writes (and logs it) rather than blocking.
 
 - **Restart-safe board.** On startup every persisted user is loaded once into an
   in-memory cache; players whose saved tile is still free are placed back on the
@@ -76,11 +79,29 @@ A few decisions worth calling out:
 - `glebarez/go-sqlite` — pure-Go, CGO-free SQLite, so it cross-compiles cleanly
 - `andreykaipov/goobs` for the OBS WebSocket API
 - `log/slog` for structured logging
-- vanilla JS + HTML5 canvas for the overlay and the dashboard
+- `//go:embed` for a single-file build; vanilla JS + HTML5 canvas for the UI
 
 ## Running it
 
-Needs Go 1.25+ and, optionally, OBS Studio with its WebSocket server enabled.
+### Option A — download a release (no Go needed)
+
+Grab the binary for your OS from [Releases](https://github.com/uinjad/Votan/releases):
+
+- **Windows:** download `Votan_*_windows_amd64.exe` and double-click it.
+- **macOS:** download `Votan_*_darwin_arm64` (Apple Silicon) or
+  `Votan_*_darwin_amd64` (Intel), then in a terminal:
+  ```
+  chmod +x Votan_*_darwin_*
+  xattr -d com.apple.quarantine Votan_*_darwin_*   # unsigned indie binary
+  ./Votan_*_darwin_*
+  ```
+
+The program opens the admin panel automatically. Add a Browser Source in OBS
+pointing at `http://127.0.0.1:8080`.
+
+### Option B — from source
+
+Needs Go 1.25+.
 
 ```
 git clone https://github.com/uinjad/Votan.git
@@ -88,15 +109,22 @@ cd Votan
 make run
 ```
 
-Add a Browser Source in OBS pointing at `http://127.0.0.1:8080`, and open
-`http://127.0.0.1:8080/admin.html` for the control panel. Config (stream id,
-OBS address/password, admin token) lives in `.env` and can be edited from the
-panel. The listen address can be overridden with `LISTEN_ADDR` in `.env`.
+Configuration (stream id, OBS address/password, admin token) is entered in the
+admin panel at `http://127.0.0.1:8080/admin.html`; the panel writes a local
+`.env` for you (mode `0600`, gitignored). See `.env.example` for the full list.
+The server binds to loopback by default; override with `LISTEN_ADDR` in `.env`.
+
+## Make targets
 
 ```
-make test      # run the engine tests
-make build     # build the binary
-make release   # build and package a zip with assets
+make build   # self-contained binary for this machine
+make run      # run without building
+make test     # unit tests
+make race     # tests under the race detector
+make check    # gofmt + vet + race (what CI enforces)
+make lint     # golangci-lint
+make dist     # cross-compile Windows + macOS binaries into ./dist
+make help     # full list
 ```
 
 ## Chat commands
@@ -118,6 +146,19 @@ loop runs. Everything runs against a headless game with no DB and no OBS:
 go test -race ./...
 ```
 
+## Releasing
+
+Releases are automated. Push a SemVer tag and a GitHub Action cross-compiles the
+single-file binaries for Windows and macOS, generates checksums, and publishes a
+release with auto-generated notes:
+
+```
+git tag -a v1.0.0 -m "Votan v1.0.0"
+git push origin v1.0.0
+```
+
+The version is baked into the binary (`-X main.version`) and logged at startup.
+
 ## Known limitations
 
 This is built to run locally for a single streamer, and the security model
@@ -133,5 +174,10 @@ config endpoint that never ships secrets to the client.
 
 - [x] Unit tests for movement, collisions and voting
 - [x] Graceful shutdown, dependency injection, async persistence
-- [ ] Flipper Zero / Bluetooth HID control of entities from the dashboard
+- [x] Single-file build with embedded UI; automated cross-platform releases
+- [ ] Localisation
 - [ ] Twitch and Kick chat alongside YouTube
+
+## License
+
+[MIT](LICENSE)

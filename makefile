@@ -1,84 +1,103 @@
-# Project
-PROJECT_NAME = Votan
-MAIN_PATH    = cmd/server/main.go
-RELEASE_DIR  = $(PROJECT_NAME)_Release
-ZIP_NAME     = $(PROJECT_NAME)_v1.0.zip
+# ---- Project ----------------------------------------------------------------
+BINARY_NAME = Votan
+PKG         = ./cmd/server
+DIST_DIR    = dist
 
-# Strip symbol/debug info to shrink the binary.
-LDFLAGS = -ldflags="-s -w"
+# Version is taken from git tags (falls back to "dev"), injected into the binary.
+VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+BUILD_FLAGS = -trimpath -ldflags="-s -w -X main.version=$(VERSION)"
 
-# Binary name per OS (.exe on Windows).
+# Single self-contained binaries (the web UI is embedded). Windows + macOS.
+RELEASE_TARGETS = windows/amd64 darwin/amd64 darwin/arm64
+
+# Local binary name (.exe on Windows).
 ifeq ($(OS),Windows_NT)
-	BINARY_NAME = $(PROJECT_NAME).exe
+	LOCAL_BIN = $(BINARY_NAME).exe
 else
-	BINARY_NAME = $(PROJECT_NAME)
+	LOCAL_BIN = $(BINARY_NAME)
 endif
 
-.PHONY: all build test run clean release help
+.PHONY: all build run test race fmt vet lint check dist tidy clean help
 
-all: test build
+all: check build
 
-## build: compile the binary
+## build: compile a self-contained binary for this machine
 build:
-	@echo "Building $(BINARY_NAME)..."
-	@go build $(LDFLAGS) -o $(BINARY_NAME) $(MAIN_PATH)
+	@echo "Building $(LOCAL_BIN) ($(VERSION))..."
+	@go build $(BUILD_FLAGS) -o $(LOCAL_BIN) $(PKG)
 	@echo "Done."
 
-## test: run the unit tests
-test:
-	@echo "Running tests..."
-	@go test ./internal/engine/...
-	@echo "Tests passed."
-
-## run: run without building
+## run: run without producing a binary
 run:
-	@go run $(MAIN_PATH)
+	@go run $(PKG)
 
-## clean: remove build artifacts and temp files
+## test: run all unit tests
+test:
+	@go test ./...
+
+## race: run all tests under the race detector
+race:
+	@go test -race -count=1 ./...
+
+## fmt: format all Go files in place
+fmt:
+	@gofmt -w .
+
+## vet: run go vet
+vet:
+	@go vet ./...
+
+## lint: run golangci-lint (install: https://golangci-lint.run)
+lint:
+	@golangci-lint run
+
+## check: what CI enforces — gofmt, vet and race tests (needs a Unix shell)
+check:
+	@test -z "$$(gofmt -l .)" || { echo "gofmt: needs formatting:"; gofmt -l .; exit 1; }
+	@go vet ./...
+	@go test -race -count=1 ./...
+
+## dist: cross-compile single binaries for Windows + macOS into ./dist
+##       (needs a Unix-like shell: bash/zsh, or Git Bash on Windows)
+dist: clean
+	@mkdir -p $(DIST_DIR)
+	@for t in $(RELEASE_TARGETS); do \
+		os=$${t%/*}; arch=$${t#*/}; \
+		out=$(DIST_DIR)/$(BINARY_NAME)_$(VERSION)_$${os}_$${arch}; \
+		[ "$$os" = "windows" ] && out=$$out.exe; \
+		echo "  $$os/$$arch -> $$out"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build $(BUILD_FLAGS) -o $$out $(PKG) || exit 1; \
+	done
+	@cd $(DIST_DIR) && { command -v sha256sum >/dev/null 2>&1 && sha256sum * > checksums.txt || shasum -a 256 * > checksums.txt; }
+	@echo "Artifacts in $(DIST_DIR)/. For a published release: git tag vX.Y.Z && git push --tags"
+
+## tidy: tidy go.mod / go.sum
+tidy:
+	@go mod tidy
+
+## clean: remove build artifacts
 clean:
 ifeq ($(OS),Windows_NT)
-	@if exist $(BINARY_NAME) del /q $(BINARY_NAME)
-	@if exist $(RELEASE_DIR) rd /s /q $(RELEASE_DIR)
-	@if exist $(ZIP_NAME) del /q $(ZIP_NAME)
+	@if exist $(LOCAL_BIN) del /q $(LOCAL_BIN)
+	@if exist $(DIST_DIR) rd /s /q $(DIST_DIR)
 else
-	@rm -f $(BINARY_NAME)
-	@rm -rf $(RELEASE_DIR)
-	@rm -f $(ZIP_NAME)
+	@rm -f $(LOCAL_BIN)
+	@rm -rf $(DIST_DIR)
 endif
 	@go clean
 	@echo "Cleaned."
 
-## release: build and package a distributable zip (binary + assets + sample .env)
-## note: on Unix this needs `zip` installed (preinstalled on macOS).
-release: clean test
-	@echo "Building release..."
-ifeq ($(OS),Windows_NT)
-	@mkdir $(RELEASE_DIR)
-	@mkdir $(RELEASE_DIR)\web
-	@mkdir $(RELEASE_DIR)\web\public
-	@go build $(LDFLAGS) -o $(RELEASE_DIR)\$(BINARY_NAME) $(MAIN_PATH)
-	@xcopy /E /I /Y web\public $(RELEASE_DIR)\web\public > nul
-	@echo OBS_ADDR=localhost:4455 > $(RELEASE_DIR)\.env
-	@echo OBS_PASS=your_password >> $(RELEASE_DIR)\.env
-	@echo ADMIN_SECRET=your_secret_token >> $(RELEASE_DIR)\.env
-	@echo YOUTUBE_VIDEO_ID= >> $(RELEASE_DIR)\.env
-	@powershell Compress-Archive -Path $(RELEASE_DIR) -DestinationPath $(ZIP_NAME) -Force
-else
-	@mkdir -p $(RELEASE_DIR)/web
-	@go build $(LDFLAGS) -o $(RELEASE_DIR)/$(BINARY_NAME) $(MAIN_PATH)
-	@cp -r web/public $(RELEASE_DIR)/web/
-	@printf 'OBS_ADDR=localhost:4455\nOBS_PASS=your_password\nADMIN_SECRET=your_secret_token\nYOUTUBE_VIDEO_ID=\n' > $(RELEASE_DIR)/.env
-	@zip -r $(ZIP_NAME) $(RELEASE_DIR) > /dev/null
-endif
-	@echo "--------------------------------------------------"
-	@echo "Release ready: $(ZIP_NAME)"
-	@echo "--------------------------------------------------"
-
 ## help: list available commands
 help:
 	@echo "Available commands:"
-	@echo "  make build   - build the binary"
-	@echo "  make test    - run the tests"
+	@echo "  make build   - self-contained binary for this machine"
 	@echo "  make run     - run without building"
-	@echo "  make release - build a distributable zip"
-	@echo "  make clean   - remove temporary files"
+	@echo "  make test    - unit tests"
+	@echo "  make race    - tests under the race detector"
+	@echo "  make fmt     - gofmt -w ."
+	@echo "  make vet     - go vet"
+	@echo "  make lint    - golangci-lint run"
+	@echo "  make check   - gofmt + vet + race (what CI runs)"
+	@echo "  make dist    - cross-compile Windows + macOS binaries into ./dist"
+	@echo "  make tidy    - go mod tidy"
+	@echo "  make clean   - remove build artifacts"
