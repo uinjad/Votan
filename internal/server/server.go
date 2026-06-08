@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -151,10 +152,18 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// stripNewlines removes characters that would let a field break out of its
+// line in the dotenv file and inject extra keys (e.g. a crafted OBS password
+// containing "\nLISTEN_ADDR=0.0.0.0:8080" would expose the secrets endpoint).
+func stripNewlines(s string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+}
+
 func (s *Server) persistConfig(req configPayload) error {
 	content := fmt.Sprintf(
 		"YOUTUBE_VIDEO_ID=%s\nOBS_ADDR=%s\nOBS_PASS=%s\nADMIN_SECRET=%s\n",
-		req.YoutubeID, req.ObsAddr, req.ObsPass, req.AdminSec,
+		stripNewlines(req.YoutubeID), stripNewlines(req.ObsAddr),
+		stripNewlines(req.ObsPass), stripNewlines(req.AdminSec),
 	)
 
 	s.cfgMu.Lock()

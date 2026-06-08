@@ -263,39 +263,58 @@
     });
 
     // 3. ЖИВИЙ СПИСОК ГРАВЦІВ
+    //
+    // Player names and IDs come straight from YouTube chat — fully
+    // attacker-controlled. Never interpolate them into innerHTML or inline
+    // event handler strings (that was a stored-XSS hole letting any viewer
+    // run JS in the admin's browser, which can read /api/config secrets).
+    // Build DOM nodes and bind listeners instead, so untrusted text is only
+    // ever assigned via textContent/title/value.
     function renderPlayerList(players) {
         const listDiv = document.getElementById('playerList');
+        listDiv.textContent = '';
+
         if (players.length === 0) {
-            listDiv.innerHTML = '<div style="color: #555; text-align: center; margin-top: 50px;">Карта порожня</div>';
+            const empty = document.createElement('div');
+            empty.style.color = '#555';
+            empty.style.textAlign = 'center';
+            empty.style.marginTop = '50px';
+            empty.textContent = 'Карта порожня';
+            listDiv.appendChild(empty);
             return;
         }
 
         players.sort((a, b) => (a.Name || a.name).localeCompare(b.Name || b.name));
 
-        let html = '';
+        const scrollTop = listDiv.scrollTop;
         players.forEach(p => {
             const id = p.ID || p.id;
             const name = p.Name || p.name;
             const status = p.Status !== undefined ? p.Status : p.status;
             const irrad = p.IsIrradiated || p.isIrradiated;
-            
+
             let statusClass = "status-0";
             let icon = "👤";
             if (irrad) { statusClass = "status-rad"; icon = "☢️"; }
             else if (status === 1) { statusClass = "status-1"; icon = "✝️"; }
 
-            html += `
-                <div class="player-item">
-                    <span class="${statusClass}" title="ID: ${id}">
-                        ${icon} ${name}
-                    </span>
-                    <button class="btn-small btn-success" onclick="selectTarget('${id}', '${name}')">🎯 Взяти</button>
-                </div>
-            `;
+            const item = document.createElement('div');
+            item.className = 'player-item';
+
+            const span = document.createElement('span');
+            span.className = statusClass;
+            span.title = `ID: ${id}`;
+            span.textContent = `${icon} ${name}`;
+
+            const btn = document.createElement('button');
+            btn.className = 'btn-small btn-success';
+            btn.textContent = '🎯 Взяти';
+            btn.addEventListener('click', () => selectTarget(id, name));
+
+            item.appendChild(span);
+            item.appendChild(btn);
+            listDiv.appendChild(item);
         });
-        
-        const scrollTop = listDiv.scrollTop;
-        listDiv.innerHTML = html;
         listDiv.scrollTop = scrollTop;
     }
 
@@ -309,7 +328,9 @@
     function log(msg) {
         const box = document.getElementById('logs');
         const time = new Date().toLocaleTimeString();
-        box.innerHTML += `<div>[${time}] ${msg}</div>`;
+        const line = document.createElement('div');
+        line.textContent = `[${time}] ${msg}`;
+        box.appendChild(line);
         box.scrollTop = box.scrollHeight;
     }
 
